@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "paper-daily"
+version = "0.1.0"
+description = "Daily AI paper recommender: multi-source search, dedup, rank, review, and archive"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+    "rapidfuzz>=3.0.0",
+    "arxiv>=2.0.0",
+]
+
+[project.optional-dependencies]
+llm = ["openai>=1.0.0"]
+
+[project.scripts]
+paper-daily = "paper_daily.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/paper_daily"]
