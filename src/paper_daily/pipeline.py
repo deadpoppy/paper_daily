@@ -14,6 +14,7 @@ from paper_daily.output import format_console, save_outputs
 from paper_daily.ranker import rank_papers
 from paper_daily.reviewer import generate_reasons
 from paper_daily.search import search_all
+from paper_daily.summarize import summarize_arxiv_papers
 
 LOG = logging.getLogger("paper_daily.pipeline")
 
@@ -154,6 +155,14 @@ async def run_pipeline(cfg: Config) -> list[dict]:
     # 8. Persist & output
     # ------------------------------------------------------------------
     save_outputs(top_papers, db, cfg.data_dir)
+
+    # ------------------------------------------------------------------
+    # 9. Summarize arXiv papers via hermes
+    # ------------------------------------------------------------------
+    summary_results = await summarize_arxiv_papers(top_papers)
+    for sr in summary_results:
+        if sr.get("success") and sr.get("has_content"):
+            db.update_paper_summary_md_path(sr["arxiv_id"], sr["md_path"])
 
     # Console summary
     summary = format_console(top_papers)

@@ -78,6 +78,11 @@ class PaperDatabase:
                 conn.execute("SELECT academic_score FROM recommendations LIMIT 1")
             except sqlite3.OperationalError:
                 conn.execute("ALTER TABLE recommendations ADD COLUMN academic_score REAL")
+            # Migrate: add summary_md_path if missing (for existing DBs)
+            try:
+                conn.execute("SELECT summary_md_path FROM papers LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.execute("ALTER TABLE papers ADD COLUMN summary_md_path TEXT")
             conn.commit()
 
     # ------------------------------------------------------------------
@@ -163,6 +168,15 @@ class PaperDatabase:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM papers WHERE doi = ?", (doi,)).fetchone()
             return dict(row) if row else None
+
+    def update_paper_summary_md_path(self, arxiv_id: str, md_path: str) -> None:
+        """Update the summary_md_path for a paper identified by arxiv_id."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE papers SET summary_md_path = ? WHERE arxiv_id = ?",
+                (md_path, arxiv_id),
+            )
+            conn.commit()
 
     # ------------------------------------------------------------------
     # Recommendations
