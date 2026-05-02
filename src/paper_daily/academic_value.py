@@ -104,15 +104,11 @@ async def _assess_one(
     paper: dict[str, Any],
     api_url: str,
     api_key: str,
+    backup_api_key: str | None,
     model: str,
     semaphore: asyncio.Semaphore,
 ) -> dict[str, Any]:
     prompt = _build_prompt(paper)
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
     payload = {
         "model": model,
         "max_tokens": 512,
@@ -120,8 +116,18 @@ async def _assess_one(
         "system": _SYSTEM_PROMPT,
     }
 
-    attempt = 0
+    keys = [k for k in (api_key, backup_api_key) if k]
+    key_idx = 0
+    attempts_per_key = 0
+    total_attempt = 0
+
     while True:
+        current_key = keys[key_idx]
+        headers = {
+            "x-api-key": current_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
         async with semaphore:
             try:
                 resp = await client.post(
@@ -157,16 +163,27 @@ async def _assess_one(
                 LOG.debug("'%s' -> academic_score=%.2f", paper.get("title", "")[:40], score)
                 return copy
             except Exception as e:
-                wait = min(2 ** attempt, 30)  # cap at 30s
+                wait = min(2 ** total_attempt, 30)  # cap at 30s
                 LOG.warning(
-                    "Academic assessment attempt %d failed for '%s': %s. Retrying in %ds...",
-                    attempt + 1,
+                    "Academic assessment attempt %d failed for '%s' (key %d): %s. Retrying in %ds...",
+                    total_attempt + 1,
                     paper.get("title", "")[:40],
+                    key_idx + 1,
                     type(e).__name__,
                     wait,
                 )
                 await asyncio.sleep(wait)
-                attempt += 1
+                total_attempt += 1
+                attempts_per_key += 1
+                # Switch to backup key after 3 consecutive failures on current key
+                if len(keys) > 1 and attempts_per_key >= 3:
+                    key_idx = (key_idx + 1) % len(keys)
+                    attempts_per_key = 0
+                    LOG.info(
+                        "Switching to API key %d for '%s' after 3 failures",
+                        key_idx + 1,
+                        paper.get("title", "")[:40],
+                    )
 
 
 async def assess_papers(
@@ -174,6 +191,7 @@ async def assess_papers(
     api_url: str,
     api_key: str,
     db: PaperDatabase,
+    backup_api_key: str | None = None,
     model: str = "MiniMax-M2.7",
     concurrency: int = 3,
 ) -> list[dict[str, Any]]:
@@ -209,7 +227,7 @@ async def assess_papers(
         semaphore = asyncio.Semaphore(concurrency)
         async with httpx.AsyncClient() as client:
             tasks = [
-                _assess_one(client, p, api_url, api_key, model, semaphore)
+                _assess_one(client, p, api_url, api_key, backup_api_key, model, semaphore)
                 for p in to_assess
             ]
             fresh_results = await asyncio.gather(*tasks)

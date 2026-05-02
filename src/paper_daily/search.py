@@ -57,7 +57,7 @@ def _sane_year(paper: dict) -> bool:
 def _build_arxiv_query(keywords: list[str], days_back: int) -> str:
     """Build an arXiv search query that uses OR across keywords.
 
-    Example: cat:cs.* AND (all:"large language model" OR all:LLM OR all:transformer)
+    Example: (cat:cs.* OR cat:stat.*) AND (all:"large language model" OR all:LLM OR all:transformer)
     """
     since = datetime.now(timezone.utc) - timedelta(days=days_back)
     since_str = since.strftime("%Y%m%d")
@@ -68,7 +68,21 @@ def _build_arxiv_query(keywords: list[str], days_back: int) -> str:
         else:
             kw_parts.append(f"all:{kw}")
     kw_query = " OR ".join(kw_parts)
-    return f"cat:cs.* AND ({kw_query}) AND submittedDate:[{since_str}0000 TO 999912312359]"
+    # Broaden categories beyond cs.* to catch stat.ML, physics.*, math.*, etc.
+    cats = " OR ".join([
+        "cat:cs.*", "cat:stat.*", "cat:physics.*", "cat:math.*",
+        "cat:eess.*", "cat:q-bio.*", "cat:econ.*",
+    ])
+    return f"({cats}) AND ({kw_query}) AND submittedDate:[{since_str}0000 TO 999912312359]"
+
+
+def _build_ss_query(keywords: list[str]) -> str:
+    """Build a Semantic Scholar query using OR semantics.
+
+    SS bulk search treats space-separated terms as AND. Use '|' for OR.
+    Example: "large language model | LLM | transformer"
+    """
+    return " | ".join(keywords)
 
 
 # ---------------------------------------------------------------------------
@@ -80,81 +94,106 @@ _ARXIV_LOCK = asyncio.Lock()
 async def _search_arxiv(keywords: list[str], max_results: int = 50, days_back: int = 180) -> list[dict]:
     q = _build_arxiv_query(keywords, days_back)
     url = "https://export.arxiv.org/api/query"
-    params = {
-        "search_query": q,
-        "start": 0,
-        "max_results": max_results,
-        "sortBy": "submittedDate",
-        "sortOrder": "descending",
-    }
-    papers = []
     ns = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+    opensearch_ns = "http://a9.com/-/spec/opensearch/1.1/"
+    papers: list[dict] = []
+    start = 0
+    page_size = min(max_results, 500)  # arXiv hard limit per request is generous; keep 500 cap
 
     async with _ARXIV_LOCK:
         async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-            for attempt in range(3):
-                try:
-                    resp = await client.get(url, params=params)
-                    if resp.status_code == 429:
-                        wait = min(2 ** attempt * 2, 20)
-                        LOG.warning("arXiv rate limited, retry in %ds (attempt %d)", wait, attempt + 1)
-                        await asyncio.sleep(wait)
-                        continue
-                    resp.raise_for_status()
-                    root = ET.fromstring(resp.text)
-                    for entry in root.findall("atom:entry", ns):
-                        title = entry.findtext("atom:title", "", namespaces=ns).replace("\n", " ").strip()
-                        summary = (entry.findtext("atom:summary", "", namespaces=ns) or "")[:600]
-                        published = entry.findtext("atom:published", "", namespaces=ns)
-                        arxiv_id = ""
-                        id_el = entry.find("atom:id", ns)
-                        if id_el is not None and id_el.text:
-                            raw_id = id_el.text.split("/")[-1]
-                            arxiv_id = raw_id.split("v")[0]
-                        doi = ""
-                        doi_el = entry.find("arxiv:doi", ns)
-                        if doi_el is not None and doi_el.text:
-                            doi = doi_el.text
-                        authors = []
-                        for author in entry.findall("atom:author", ns):
-                            name = author.findtext("atom:name", "", namespaces=ns)
-                            if name:
-                                authors.append(name)
-                        pdf_url = ""
-                        for link in entry.findall("atom:link", ns):
-                            if link.get("title") == "pdf":
-                                pdf_url = link.get("href", "")
-                                break
-                        year = None
-                        pub_date = None
-                        if published:
-                            try:
-                                dt = datetime.strptime(published[:10], "%Y-%m-%d")
-                                year = dt.year
-                                pub_date = dt.strftime("%Y-%m-%d")
-                            except ValueError:
-                                pass
-                        papers.append({
-                            "title": title,
-                            "year": year,
-                            "published_date": pub_date,
-                            "arxiv_id": arxiv_id,
-                            "doi": doi,
-                            "citation_count": 0,
-                            "authors": authors[:5],
-                            "abstract": summary,
-                            "venue": "arXiv",
-                            "url": pdf_url or (f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else ""),
-                            "source": "arxiv",
-                        })
+            while len(papers) < max_results:
+                params = {
+                    "search_query": q,
+                    "start": start,
+                    "max_results": page_size,
+                    "sortBy": "submittedDate",
+                    "sortOrder": "descending",
+                }
+                for attempt in range(3):
+                    try:
+                        resp = await client.get(url, params=params)
+                        if resp.status_code == 429:
+                            wait = min(2 ** attempt * 2, 20)
+                            LOG.warning("arXiv rate limited, retry in %ds (attempt %d)", wait, attempt + 1)
+                            await asyncio.sleep(wait)
+                            continue
+                        resp.raise_for_status()
+                        root = ET.fromstring(resp.text)
+
+                        # Parse total results to know when to stop
+                        total_el = root.find(f"{{{opensearch_ns}}}totalResults")
+                        total_results = int(total_el.text) if total_el is not None else 0
+
+                        entries = root.findall("atom:entry", ns)
+                        if not entries:
+                            break  # No more results
+
+                        for entry in entries:
+                            title = entry.findtext("atom:title", "", namespaces=ns).replace("\n", " ").strip()
+                            summary = (entry.findtext("atom:summary", "", namespaces=ns) or "")[:600]
+                            published = entry.findtext("atom:published", "", namespaces=ns)
+                            arxiv_id = ""
+                            id_el = entry.find("atom:id", ns)
+                            if id_el is not None and id_el.text:
+                                raw_id = id_el.text.split("/")[-1]
+                                arxiv_id = raw_id.split("v")[0]
+                            doi = ""
+                            doi_el = entry.find("arxiv:doi", ns)
+                            if doi_el is not None and doi_el.text:
+                                doi = doi_el.text
+                            authors = []
+                            for author in entry.findall("atom:author", ns):
+                                name = author.findtext("atom:name", "", namespaces=ns)
+                                if name:
+                                    authors.append(name)
+                            pdf_url = ""
+                            for link in entry.findall("atom:link", ns):
+                                if link.get("title") == "pdf":
+                                    pdf_url = link.get("href", "")
+                                    break
+                            year = None
+                            pub_date = None
+                            if published:
+                                try:
+                                    dt = datetime.strptime(published[:10], "%Y-%m-%d")
+                                    year = dt.year
+                                    pub_date = dt.strftime("%Y-%m-%d")
+                                except ValueError:
+                                    pass
+                            papers.append({
+                                "title": title,
+                                "year": year,
+                                "published_date": pub_date,
+                                "arxiv_id": arxiv_id,
+                                "doi": doi,
+                                "citation_count": 0,
+                                "authors": authors[:5],
+                                "abstract": summary,
+                                "venue": "arXiv",
+                                "url": pdf_url or (f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else ""),
+                                "source": "arxiv",
+                            })
+                        break  # Success, exit retry loop
+                    except Exception as e:
+                        LOG.warning("arXiv error (attempt %d): %s", attempt + 1, e)
+                        if attempt < 2:
+                            await asyncio.sleep(2)
+                else:
+                    # All retries failed for this page
                     break
-                except Exception as e:
-                    LOG.warning("arXiv error (attempt %d): %s", attempt + 1, e)
-                    if attempt < 2:
-                        await asyncio.sleep(2)
+
+                # Stop if we got fewer results than requested or reached total
+                if len(entries) < page_size or start + len(entries) >= total_results:
+                    break
+
+                start += page_size
+                # Respect arXiv rate limits between pages
+                await asyncio.sleep(1)
+
             # Small delay after arXiv request to respect rate limits
             await asyncio.sleep(1)
-    return papers
+    return papers[:max_results]
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +249,7 @@ async def _search_openalex(
                         if isinstance(best_oa, dict):
                             pdf_url = best_oa.get("pdf_url", "")
                         papers.append({
-                            "title": w.get("display_name", ""),
+                            "title": (w.get("display_name") or ""),
                             "year": w.get("publication_year"),
                             "published_date": _parse_date(pub_date),
                             "doi": doi,
@@ -236,6 +275,9 @@ async def _search_openalex(
 # ---------------------------------------------------------------------------
 # 3. Semantic Scholar (bulk endpoint for better throughput & date filtering)
 # ---------------------------------------------------------------------------
+_SS_LOCK = asyncio.Lock()
+
+
 async def _search_semantic_scholar(
     query: str, max_results: int = 50, days_back: int = 180
 ) -> list[dict]:
@@ -244,57 +286,59 @@ async def _search_semantic_scholar(
     papers = []
     token = None
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        while len(papers) < max_results:
-            params: dict[str, Any] = {
-                "query": query,
-                "fields": fields,
-                "publicationDateOrYear": f"{since}:",
-            }
-            if token:
-                params = {"fields": fields, "token": token}
+    async with _SS_LOCK:
+        async with httpx.AsyncClient(timeout=60) as client:
+            while len(papers) < max_results:
+                params: dict[str, Any] = {
+                    "query": query,
+                    "fields": fields,
+                    "publicationDateOrYear": f"{since}:",
+                }
+                if token:
+                    params["token"] = token
 
-            try:
-                resp = await client.get(
-                    "https://api.semanticscholar.org/graph/v1/paper/search/bulk",
-                    params=params,
-                )
-                if resp.status_code == 429:
-                    wait = min(2, 20)
-                    LOG.warning("Semantic Scholar rate limited, waiting %ds...", wait)
-                    await asyncio.sleep(wait)
-                    continue
-                resp.raise_for_status()
-                data = resp.json()
-                for p in data.get("data", []):
-                    try:
-                        ext = p.get("externalIds") or {}
-                        pub_date = p.get("publicationDate")
-                        papers.append({
-                            "title": p.get("title", ""),
-                            "year": p.get("year"),
-                            "published_date": _parse_date(pub_date) if pub_date else None,
-                            "doi": ext.get("DOI", ""),
-                            "arxiv_id": ext.get("ArXiv", ""),
-                            "citation_count": p.get("citationCount", 0) or 0,
-                            "authors": [a.get("name", "") for a in (p.get("authors") or [])[:5]],
-                            "abstract": (p.get("abstract") or "")[:600],
-                            "venue": p.get("venue", ""),
-                            "url": (p.get("openAccessPdf") or {}).get("url", "")
-                                 or (f"https://arxiv.org/abs/{ext.get('ArXiv', '')}" if ext.get("ArXiv") else "")
-                                 or (f"https://doi.org/{ext.get('DOI', '')}" if ext.get("DOI") else ""),
-                            "source": "semantic_scholar",
-                        })
-                    except Exception as inner:
-                        LOG.debug("SS record parse error: %s", inner)
+                try:
+                    resp = await client.get(
+                        "https://api.semanticscholar.org/graph/v1/paper/search/bulk",
+                        params=params,
+                    )
+                    if resp.status_code == 429:
+                        wait = 5
+                        LOG.warning("Semantic Scholar rate limited, waiting %ds...", wait)
+                        await asyncio.sleep(wait)
                         continue
+                    resp.raise_for_status()
+                    data = resp.json()
+                    batch = data.get("data", [])
+                    for p in batch:
+                        try:
+                            ext = p.get("externalIds") or {}
+                            pub_date = p.get("publicationDate")
+                            papers.append({
+                                "title": (p.get("title") or ""),
+                                "year": p.get("year"),
+                                "published_date": _parse_date(pub_date) if pub_date else None,
+                                "doi": ext.get("DOI", ""),
+                                "arxiv_id": ext.get("ArXiv", ""),
+                                "citation_count": p.get("citationCount", 0) or 0,
+                                "authors": [a.get("name", "") for a in (p.get("authors") or [])[:5]],
+                                "abstract": (p.get("abstract") or "")[:600],
+                                "venue": p.get("venue", ""),
+                                "url": (p.get("openAccessPdf") or {}).get("url", "")
+                                     or (f"https://arxiv.org/abs/{ext.get('ArXiv', '')}" if ext.get("ArXiv") else "")
+                                     or (f"https://doi.org/{ext.get('DOI', '')}" if ext.get("DOI") else ""),
+                                "source": "semantic_scholar",
+                            })
+                        except Exception as inner:
+                            LOG.debug("SS record parse error: %s", inner)
+                            continue
 
-                token = data.get("token")
-                if not token or not data.get("data"):
+                    token = data.get("token")
+                    if not token or not batch:
+                        break
+                except Exception as e:
+                    LOG.warning("Semantic Scholar error: %s", e)
                     break
-            except Exception as e:
-                LOG.warning("Semantic Scholar error: %s", e)
-                break
 
     return papers[:max_results]
 
@@ -428,10 +472,13 @@ async def search_all(
     if not query:
         query = " ".join(keywords)
 
+    # Semantic Scholar uses '|' for OR semantics; plain space = AND.
+    ss_query = _build_ss_query(keywords)
+
     tasks = [
         _search_arxiv(keywords, max_results, days_back),
         _search_openalex(query, max_results, days_back, email),
-        _search_semantic_scholar(query, max_results, days_back),
+        _search_semantic_scholar(ss_query, max_results, days_back),
         _search_crossref(query, max_results, days_back),
     ]
     names = ["arxiv", "openalex", "semantic_scholar", "crossref"]

@@ -1,6 +1,7 @@
 """Generate Chinese recommendation reasons via unified Anthropic-compatible LLM or fallback heuristics."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -34,40 +35,62 @@ async def _call_anthropic_compatible(
     prompt: str,
     base_url: str,
     api_key: str,
+    backup_api_key: str | None,
     model: str,
 ) -> str:
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": model,
-        "max_tokens": 256,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            f"{base_url.rstrip('/')}/v1/messages",
-            headers=headers,
-            json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    keys = [k for k in (api_key, backup_api_key) if k]
+    key_idx = 0
+    attempt = 0
 
-        content_blocks = data.get("content", [])
-        if isinstance(content_blocks, list) and content_blocks:
-            for block in content_blocks:
-                if block.get("type") == "text":
-                    return block.get("text", "").strip()
-            return content_blocks[0].get("text", "").strip()
-        return str(content_blocks).strip()
+    while True:
+        key = keys[key_idx]
+        headers = {
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        payload = {
+            "model": model,
+            "max_tokens": 256,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    f"{base_url.rstrip('/')}/v1/messages",
+                    headers=headers,
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+                content_blocks = data.get("content", [])
+                if isinstance(content_blocks, list) and content_blocks:
+                    for block in content_blocks:
+                        if block.get("type") == "text":
+                            return block.get("text", "").strip()
+                    return content_blocks[0].get("text", "").strip()
+                return str(content_blocks).strip()
+        except Exception as e:
+            wait = min(2 ** attempt, 30)
+            LOG.warning(
+                "LLM reason generation attempt %d failed with key %d: %s. Retrying in %ds...",
+                attempt + 1,
+                key_idx + 1,
+                type(e).__name__,
+                wait,
+            )
+            await asyncio.sleep(wait)
+            attempt += 1
+            if len(keys) > 1:
+                key_idx = (key_idx + 1) % len(keys)
 
 
 async def generate_reasons(
     papers: list[dict],
     base_url: str | None = None,
     api_key: str | None = None,
+    backup_api_key: str | None = None,
     model: str = "MiniMax-M2.7",
 ) -> list[dict]:
     """Attach Chinese recommendation reason to each paper."""
@@ -82,17 +105,13 @@ async def generate_reasons(
     results = []
     for p in papers:
         prompt = _build_prompt(p)
-        try:
-            reason = await _call_anthropic_compatible(prompt, base_url, api_key, model)
-            # Clean up quotes
-            reason = reason.strip('"').strip("'").strip()
-            copy = dict(p)
-            copy["reason_zh"] = reason
-            results.append(copy)
-            LOG.debug("Generated reason for '%s...'", p.get("title", "")[:40])
-        except Exception as e:
-            LOG.warning("LLM reason generation failed for '%s': %s", p.get("title", "")[:40], e)
-            results.append(_fallback_reason(p))
+        reason = await _call_anthropic_compatible(prompt, base_url, api_key, backup_api_key, model)
+        # Clean up quotes
+        reason = reason.strip('"').strip("'").strip()
+        copy = dict(p)
+        copy["reason_zh"] = reason
+        results.append(copy)
+        LOG.debug("Generated reason for '%s...'", p.get("title", "")[:40])
     return results
 
 

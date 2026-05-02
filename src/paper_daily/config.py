@@ -27,6 +27,7 @@ class Config:
     # Unified LLM API (Anthropic-compatible) for both academic assessment & Chinese reasons
     academic_value_url: str | None = None
     academic_value_api_key: str | None = None
+    academic_value_backup_api_key: str | None = None
     academic_value_model: str = "MiniMax-M2.7"
     # Ranking weights (5-dimension, uniform)
     w_relevance: float = 0.20
@@ -60,6 +61,7 @@ def load_config(env_path: Path | None = None) -> Config:
         openalex_email=os.getenv("OPENALEX_EMAIL") or None,
         academic_value_url=os.getenv("ACADEMIC_VALUE_URL") or None,
         academic_value_api_key=os.getenv("ACADEMIC_VALUE_API_KEY") or None,
+        academic_value_backup_api_key=os.getenv("ACADEMIC_VALUE_BACKUP_API_KEY") or None,
         academic_value_model=os.getenv("ACADEMIC_VALUE_MODEL", "MiniMax-M2.7"),
         w_relevance=float(os.getenv("W_RELEVANCE", "0.20")),
         w_recency=float(os.getenv("W_RECENCY", "0.20")),

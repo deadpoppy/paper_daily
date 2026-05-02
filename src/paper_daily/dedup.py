@@ -11,7 +11,9 @@ LOG = logging.getLogger("paper_daily.dedup")
 TITLE_SIM_THRESHOLD = 0.88
 
 
-def _norm_title(t: str) -> str:
+def _norm_title(t: str | None) -> str:
+    if not t:
+        return ""
     return t.lower().strip().rstrip(".")
 
 
@@ -74,9 +76,13 @@ def dedup_merge(papers: list[dict]) -> list[dict]:
     title_index: dict[str, int] = {}
 
     for p in papers:
+        title = (p.get("title") or "").strip()
+        if not title:
+            LOG.debug("Skipping paper with empty title (doi=%s arxiv=%s)", p.get("doi"), p.get("arxiv_id"))
+            continue
         doi = (p.get("doi") or "").strip().lower()
         arxiv_id = (p.get("arxiv_id") or "").strip().lower()
-        norm = _norm_title(p.get("title", ""))
+        norm = _norm_title(title)
 
         dup_idx = None
         if doi and doi in doi_index:
@@ -121,9 +127,12 @@ def dedup_merge(papers: list[dict]) -> list[dict]:
 def filter_seen(papers: list[dict], seen_dois: set[str], seen_arxivs: set[str], seen_titles: set[str]) -> list[dict]:
     filtered = []
     for p in papers:
+        title_raw = (p.get("title") or "").strip()
+        if not title_raw:
+            continue
         doi = (p.get("doi") or "").strip().lower()
         arxiv = (p.get("arxiv_id") or "").strip().lower()
-        title = _norm_title(p.get("title", ""))
+        title = _norm_title(title_raw)
         if doi and doi in seen_dois:
             continue
         if arxiv and arxiv in seen_arxivs:
