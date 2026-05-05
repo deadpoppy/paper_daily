@@ -98,7 +98,7 @@ async def _search_arxiv(keywords: list[str], max_results: int = 50, days_back: i
     opensearch_ns = "http://a9.com/-/spec/opensearch/1.1/"
     papers: list[dict] = []
     start = 0
-    page_size = min(max_results, 500)  # arXiv hard limit per request is generous; keep 500 cap
+    page_size = min(max_results, 1000)  # arXiv allows up to 2000; use 1000 to balance payload size and fewer requests
 
     async with _ARXIV_LOCK:
         async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
@@ -110,13 +110,16 @@ async def _search_arxiv(keywords: list[str], max_results: int = 50, days_back: i
                     "sortBy": "submittedDate",
                     "sortOrder": "descending",
                 }
-                for attempt in range(3):
+                attempt = 0
+                while True:
                     try:
                         resp = await client.get(url, params=params)
                         if resp.status_code == 429:
-                            wait = min(2 ** attempt * 2, 20)
-                            LOG.warning("arXiv rate limited, retry in %ds (attempt %d)", wait, attempt + 1)
+                            # arXiv official: max 1 req/s (interval >= 3 s). Back off aggressively.
+                            wait = max(3, min(2 ** attempt * 2, 120))
+                            LOG.warning("arXiv rate limited (429), retry in %ds (attempt %d)", wait, attempt + 1)
                             await asyncio.sleep(wait)
+                            attempt += 1
                             continue
                         resp.raise_for_status()
                         root = ET.fromstring(resp.text)
@@ -176,23 +179,23 @@ async def _search_arxiv(keywords: list[str], max_results: int = 50, days_back: i
                             })
                         break  # Success, exit retry loop
                     except Exception as e:
-                        LOG.warning("arXiv error (attempt %d): %s", attempt + 1, e)
-                        if attempt < 2:
-                            await asyncio.sleep(2)
-                else:
-                    # All retries failed for this page
-                    break
+                        # Respect official interval even on transient errors; never give up.
+                        wait = max(3, min(2 ** attempt * 2, 120))
+                        LOG.warning("arXiv error (attempt %d): %s, retry in %ds", attempt + 1, e, wait)
+                        await asyncio.sleep(wait)
+                        attempt += 1
+                        # Never give up; loop again until success
 
                 # Stop if we got fewer results than requested or reached total
                 if len(entries) < page_size or start + len(entries) >= total_results:
                     break
 
                 start += page_size
-                # Respect arXiv rate limits between pages
-                await asyncio.sleep(1)
+                # Official requirement: interval >= 3 s between requests
+                await asyncio.sleep(3)
 
-            # Small delay after arXiv request to respect rate limits
-            await asyncio.sleep(1)
+            # Ensure next caller also waits 3 s before its first request
+            await asyncio.sleep(3)
     return papers[:max_results]
 
 
