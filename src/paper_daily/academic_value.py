@@ -134,7 +134,6 @@ async def _assess_one(
                     f"{api_url.rstrip('/')}/v1/messages",
                     headers=headers,
                     json=payload,
-                    timeout=120,
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -225,7 +224,12 @@ async def assess_papers(
 
     if to_assess:
         semaphore = asyncio.Semaphore(concurrency)
-        async with httpx.AsyncClient() as client:
+        limits = httpx.Limits(
+            max_connections=max(50, concurrency * 5),
+            max_keepalive_connections=max(20, concurrency * 3),
+        )
+        timeout = httpx.Timeout(180.0, connect=60.0, pool=90.0)
+        async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
             tasks = [
                 _assess_one(client, p, api_url, api_key, backup_api_key, model, semaphore)
                 for p in to_assess
