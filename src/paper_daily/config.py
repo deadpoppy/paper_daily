@@ -87,18 +87,18 @@ def load_config(env_path: Path | None = None) -> Config:
 def _default_topics() -> list[Topic]:
     """Default AI-related search topics (broad coverage)."""
     return [
-        Topic("llm", "Large Language Models", ["large language model", "LLM", "transformer", "reasoning", "in-context learning"]),
+        # Topic("llm", "Large Language Models", ["large language model", "LLM", "transformer", "reasoning", "in-context learning"]),
         # Topic("vision", "Computer Vision", ["computer vision", "diffusion model", "image generation", "segmentation", "object detection"]),
-        Topic("rl", "Reinforcement Learning", ["reinforcement learning", "RLHF", "PPO", "Q-learning", "policy gradient"]),
-        Topic("multimodal", "Multimodal Learning", ["multimodal", "vision-language model", "cross-modal", "audio-visual"]),
-        Topic("agent", "AI Agents", ["AI agent", "autonomous agent", "tool use", "planning", "multi-agent"]),
-        Topic("efficiency", "Efficiency & Systems", ["model efficiency", "quantization", "pruning", "distillation", "inference optimization"]),
-        Topic("genai", "Generative AI", ["generative AI", "text-to-image", "text-to-video", "flow model", "generative model"]),
+        # Topic("rl", "Reinforcement Learning", ["reinforcement learning", "RLHF", "PPO", "Q-learning", "policy gradient"]),
+        # Topic("multimodal", "Multimodal Learning", ["multimodal", "vision-language model", "cross-modal", "audio-visual"]),
+        # Topic("agent", "AI Agents", ["AI agent", "autonomous agent", "tool use", "planning", "multi-agent"]),
+        # Topic("efficiency", "Efficiency & Systems", ["model efficiency", "quantization", "pruning", "distillation", "inference optimization"]),
+        # Topic("genai", "Generative AI", ["generative AI", "text-to-image", "text-to-video", "flow model", "generative model"]),
         Topic("embodied", "Embodied AI", ["embodied AI", "robot learning", "manipulation", "humanoid robot", "locomotion"]),
         Topic("autonomous_driving", "Autonomous Driving", ["autonomous driving", "self-driving", "end-to-end driving", "motion planning"]),
-        Topic("foundation_model", "Foundation Models", ["foundation model", "pre-training", "scaling law", "emergent ability", "model adaptation"]),
+        # Topic("foundation_model", "Foundation Models", ["foundation model", "pre-training", "scaling law", "emergent ability", "model adaptation"]),
         Topic("world_model", "World Models", ["world model", "environment model", "predictive model", "model-based RL"]),
         Topic("slam", "SLAM", ["SLAM", "simultaneous localization and mapping", "visual odometry", "3D reconstruction"]),
         Topic("end_to_end", "End-to-End Learning", ["end-to-end learning", "end-to-end system", "end-to-end training", "end-to-end optimization"]),
-        Topic("dl_theory", "Deep Learning Theory", ["neural network theory", "optimization landscape", "deep learning theory", "representation learning", "generalization"]),
+        # Topic("dl_theory", "Deep Learning Theory", ["neural network theory", "optimization landscape", "deep learning theory", "representation learning", "generalization"]),
     ]
