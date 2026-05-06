@@ -4,10 +4,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import arxiv
 import httpx
 
 LOG = logging.getLogger("paper_daily.search")
@@ -86,53 +86,39 @@ def _build_ss_query(keywords: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 1. arXiv (Atom API via httpx)
+# 1. arXiv (official arxiv package)
 # ---------------------------------------------------------------------------
 _ARXIV_LOCK = asyncio.Lock()
 
 
-def _parse_arxiv_entry(entry, ns: dict[str, str]) -> dict:
-    """Parse a single arXiv Atom <entry> into a paper dict."""
-    title = entry.findtext("atom:title", "", namespaces=ns).replace("\n", " ").strip()
-    summary = (entry.findtext("atom:summary", "", namespaces=ns) or "")
-    published = entry.findtext("atom:published", "", namespaces=ns)
-    arxiv_id = ""
-    id_el = entry.find("atom:id", ns)
-    if id_el is not None and id_el.text:
-        raw_id = id_el.text.split("/")[-1]
-        arxiv_id = raw_id.split("v")[0]
-    doi = ""
-    doi_el = entry.find("arxiv:doi", ns)
-    if doi_el is not None and doi_el.text:
-        doi = doi_el.text
-    authors = []
-    for author in entry.findall("atom:author", ns):
-        name = author.findtext("atom:name", "", namespaces=ns)
-        if name:
-            authors.append(name)
-    pdf_url = ""
-    for link in entry.findall("atom:link", ns):
-        if link.get("title") == "pdf":
-            pdf_url = link.get("href", "")
-            break
+def _normalise_arxiv_result(result: arxiv.Result) -> dict:
+    """Convert an arxiv.Result to the unified paper schema."""
+    arxiv_id = result.entry_id.split("/abs/")[-1] if result.entry_id else ""
+    if arxiv_id and "v" in arxiv_id:
+        arxiv_id_base = arxiv_id.rsplit("v", 1)
+        if len(arxiv_id_base) == 2 and arxiv_id_base[1].isdigit():
+            arxiv_id = arxiv_id_base[0]
+
+    authors = [str(a) for a in (result.authors or [])]
+    pdf_url = result.pdf_url or ""
+
     year = None
     pub_date = None
-    if published:
-        try:
-            dt = datetime.strptime(published[:10], "%Y-%m-%d")
-            year = dt.year
-            pub_date = dt.strftime("%Y-%m-%d")
-        except ValueError:
-            pass
+    if result.published:
+        year = result.published.year
+        pub_date = result.published.strftime("%Y-%m-%d")
+
+    doi = result.doi or ""
+
     return {
-        "title": title,
+        "title": (result.title or "").replace("\n", " ").strip(),
         "year": year,
         "published_date": pub_date,
         "arxiv_id": arxiv_id,
         "doi": doi,
         "citation_count": 0,
         "authors": authors[:5],
-        "abstract": summary,
+        "abstract": result.summary or "",
         "venue": "arXiv",
         "url": pdf_url or (f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else ""),
         "source": "arxiv",
@@ -141,66 +127,29 @@ def _parse_arxiv_entry(entry, ns: dict[str, str]) -> dict:
 
 async def _search_arxiv(keywords: list[str], max_results: int = 50, days_back: int = 180) -> list[dict]:
     q = _build_arxiv_query(keywords, days_back)
-    url = "https://export.arxiv.org/api/query"
-    ns = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
-    opensearch_ns = "http://a9.com/-/spec/opensearch/1.1/"
-    papers: list[dict] = []
-    start = 0
-    page_size = min(max_results, 1000)  # arXiv allows up to 2000; use 1000 to balance payload size and fewer requests
+
+    def _run() -> list[dict]:
+        client = arxiv.Client(
+            page_size=min(max_results, 1000),
+            delay_seconds=3,
+            num_retries=500,
+        )
+        search = arxiv.Search(
+            query=q,
+            max_results=max_results,
+            sort_by=arxiv.SortCriterion.SubmittedDate,
+            sort_order=arxiv.SortOrder.Descending,
+        )
+        return [_normalise_arxiv_result(r) for r in client.results(search)]
 
     async with _ARXIV_LOCK:
-        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-            while len(papers) < max_results:
-                params = {
-                    "search_query": q,
-                    "start": start,
-                    "max_results": page_size,
-                    "sortBy": "submittedDate",
-                    "sortOrder": "descending",
-                }
-                attempt = 0
-                while True:
-                    try:
-                        resp = await client.get(url, params=params)
-                        if resp.status_code == 429:
-                            # arXiv official: max 1 req/s (interval >= 3 s). Back off aggressively.
-                            wait = max(3, min(2 ** attempt * 2, 120))
-                            LOG.warning("arXiv rate limited (429), retry in %ds (attempt %d)", wait, attempt + 1)
-                            await asyncio.sleep(wait)
-                            attempt += 1
-                            continue
-                        resp.raise_for_status()
-                        root = ET.fromstring(resp.text)
-
-                        # Parse total results to know when to stop
-                        total_el = root.find(f"{{{opensearch_ns}}}totalResults")
-                        total_results = int(total_el.text) if total_el is not None else 0
-
-                        entries = root.findall("atom:entry", ns)
-                        if not entries:
-                            break  # No more results
-
-                        for entry in entries:
-                            papers.append(_parse_arxiv_entry(entry, ns))
-                        break  # Success, exit retry loop
-                    except Exception as e:
-                        # Respect official interval even on transient errors; never give up.
-                        wait = max(3, min(2 ** attempt * 2, 120))
-                        LOG.warning("arXiv error (attempt %d): %s, retry in %ds", attempt + 1, e, wait)
-                        await asyncio.sleep(wait)
-                        attempt += 1
-                        # Never give up; loop again until success
-
-                # Stop if we got fewer results than requested or reached total
-                if len(entries) < page_size or start + len(entries) >= total_results:
-                    break
-
-                start += page_size
-                # Official requirement: interval >= 3 s between requests
-                await asyncio.sleep(3)
-
-            # Ensure next caller also waits 3 s before its first request
-            await asyncio.sleep(3)
+        try:
+            papers = await asyncio.to_thread(_run)
+        except Exception as e:
+            LOG.warning("arXiv search failed: %s", e)
+            papers = []
+        # Buffer before releasing lock to stay well below arXiv rate limits
+        await asyncio.sleep(1)
     return papers[:max_results]
 
 
@@ -414,50 +363,44 @@ async def _search_crossref(
 # arXiv resolution helpers
 # ---------------------------------------------------------------------------
 async def _fetch_arxiv_by_ids(arxiv_ids: list[str]) -> dict[str, dict]:
-    """Batch-fetch arXiv papers by their IDs using id_list parameter.
+    """Batch-fetch arXiv papers by their IDs using the official arxiv package.
 
     Returns a dict mapping lowercase arxiv_id -> paper dict.
     """
     if not arxiv_ids:
         return {}
 
-    url = "https://export.arxiv.org/api/query"
-    ns = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+    unique_ids = list(dict.fromkeys(arxiv_ids))
     result: dict[str, dict] = {}
 
-    unique_ids = list(dict.fromkeys(arxiv_ids))
-
     async with _ARXIV_LOCK:
-        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-            for i in range(0, len(unique_ids), 50):
-                batch = unique_ids[i : i + 50]
-                ids_str = ",".join(batch)
-                attempt = 0
-                while True:
-                    try:
-                        resp = await client.get(url, params={"id_list": ids_str, "max_results": len(batch)})
-                        if resp.status_code == 429:
-                            wait = max(3, min(2 ** attempt * 2, 120))
-                            LOG.warning(
-                                "arXiv id_list rate limited, retry in %ds (attempt %d)", wait, attempt + 1
-                            )
-                            await asyncio.sleep(wait)
-                            attempt += 1
-                            continue
-                        resp.raise_for_status()
-                        root = ET.fromstring(resp.text)
-                        for entry in root.findall("atom:entry", ns):
-                            paper = _parse_arxiv_entry(entry, ns)
-                            if paper.get("arxiv_id"):
-                                result[paper["arxiv_id"].lower()] = paper
-                        break
-                    except Exception as e:
-                        wait = max(3, min(2 ** attempt * 2, 120))
-                        LOG.warning("arXiv id_list error (attempt %d): %s, retry in %ds", attempt + 1, e, wait)
-                        await asyncio.sleep(wait)
-                        attempt += 1
+        for i in range(0, len(unique_ids), 50):
+            batch = unique_ids[i : i + 50]
+
+            def _run() -> list[dict]:
+                client = arxiv.Client(
+                    page_size=len(batch),
+                    delay_seconds=3,
+                    num_retries=500,
+                )
+                search = arxiv.Search(id_list=batch, max_results=len(batch))
+                return [_normalise_arxiv_result(r) for r in client.results(search)]
+
+            try:
+                papers = await asyncio.to_thread(_run)
+            except Exception as e:
+                LOG.warning("arXiv id_list batch failed: %s", e)
+                papers = []
+
+            for p in papers:
+                if p.get("arxiv_id"):
+                    result[p["arxiv_id"].lower()] = p
+
+            if i + 50 < len(unique_ids):
                 await asyncio.sleep(3)
-            await asyncio.sleep(3)
+
+        await asyncio.sleep(1)
+
     return result
 
 
@@ -466,60 +409,48 @@ async def _search_arxiv_by_title(title: str) -> dict | None:
     if not title or len(title) < 5:
         return None
 
-    url = "https://export.arxiv.org/api/query"
-    ns = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
-
     safe_title = title.replace('"', "").strip()
     q = f'ti:"{safe_title}"'
 
+    def _run() -> list[arxiv.Result]:
+        client = arxiv.Client(
+            page_size=10,
+            delay_seconds=3,
+            num_retries=500,
+        )
+        search = arxiv.Search(query=q, max_results=10)
+        return list(client.results(search))
+
     async with _ARXIV_LOCK:
-        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-            attempt = 0
-            while True:
-                try:
-                    resp = await client.get(url, params={"search_query": q, "start": 0, "max_results": 10})
-                    if resp.status_code == 429:
-                        wait = max(3, min(2 ** attempt * 2, 120))
-                        LOG.warning(
-                            "arXiv title search rate limited, retry in %ds (attempt %d)", wait, attempt + 1
-                        )
-                        await asyncio.sleep(wait)
-                        attempt += 1
-                        continue
-                    resp.raise_for_status()
-                    root = ET.fromstring(resp.text)
-                    entries = root.findall("atom:entry", ns)
-                    if not entries:
-                        return None
+        try:
+            results = await asyncio.to_thread(_run)
+        except Exception as e:
+            LOG.warning("arXiv title search failed: %s", e)
+            return None
 
-                    search_norm = re.sub(r"[^\w]", "", title.lower())
-                    best = None
-                    best_score = 0
+    if not results:
+        return None
 
-                    for entry in entries:
-                        entry_title = (
-                            entry.findtext("atom:title", "", namespaces=ns).replace("\n", " ").strip()
-                        )
-                        entry_norm = re.sub(r"[^\w]", "", entry_title.lower())
-                        if entry_norm == search_norm:
-                            best = entry
-                            break
-                        if search_norm in entry_norm or entry_norm in search_norm:
-                            score = len(set(search_norm) & set(entry_norm))
-                            if score > best_score:
-                                best_score = score
-                                best = entry
+    search_norm = re.sub(r"[^\w]", "", title.lower())
+    best = None
+    best_score = 0
 
-                    if best is None:
-                        return None
+    for result in results:
+        entry_title = (result.title or "").replace("\n", " ").strip()
+        entry_norm = re.sub(r"[^\w]", "", entry_title.lower())
+        if entry_norm == search_norm:
+            best = result
+            break
+        if search_norm in entry_norm or entry_norm in search_norm:
+            score = len(set(search_norm) & set(entry_norm))
+            if score > best_score:
+                best_score = score
+                best = result
 
-                    return _parse_arxiv_entry(best, ns)
+    if best is None:
+        return None
 
-                except Exception as e:
-                    wait = max(3, min(2 ** attempt * 2, 120))
-                    LOG.warning("arXiv title search error (attempt %d): %s, retry in %ds", attempt + 1, e, wait)
-                    await asyncio.sleep(wait)
-                    attempt += 1
+    return _normalise_arxiv_result(best)
 
 
 async def _resolve_arxiv_versions(papers: list[dict]) -> list[dict]:

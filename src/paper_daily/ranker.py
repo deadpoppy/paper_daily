@@ -9,6 +9,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from paper_daily.semantic_ranker import get_semantic_ranker
+
 
 def _tokenize(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]{2,}", text.lower()))
@@ -29,8 +31,8 @@ def _parse_date(date_str: str | None) -> datetime | None:
             return None
 
 
-def score_relevance(paper: dict, topic_keywords: list[list[str]]) -> float:
-    """Max Jaccard-like overlap with any topic keyword set."""
+def score_relevance_lexical(paper: dict, topic_keywords: list[list[str]]) -> float:
+    """Max Jaccard-like overlap with any topic keyword set (lexical fallback)."""
     text = " ".join([
         paper.get("title") or "",
         paper.get("abstract") or "",
@@ -100,14 +102,25 @@ def rank_papers(
 ) -> list[dict]:
     now = datetime.now(timezone.utc)
 
+    # --- Semantic relevance (batch, CPU, lightweight) ---
+    ranker = get_semantic_ranker()
+    semantic_scores = ranker.score_papers(papers, topic_keywords)
+    if semantic_scores is not None:
+        scoring_mode = "semantic"
+    else:
+        scoring_mode = "lexical"
+
     # --- Impact: steep relative decay within this batch ---
     # Highest citation in the batch gets 1.0; others decay as (relative)^2
     max_citations = max((p.get("citation_count", 0) or 0) for p in papers) if papers else 1
     max_citations = max(max_citations, 1)  # avoid div-by-zero
 
     scored = []
-    for p in papers:
-        rel = score_relevance(p, topic_keywords)
+    for i, p in enumerate(papers):
+        if semantic_scores is not None:
+            rel = semantic_scores[i]
+        else:
+            rel = score_relevance_lexical(p, topic_keywords)
         rec = score_recency(p, now)
         nov = score_novelty(p, seen_dois, seen_arxivs)
         aca = p.get("academic_score", 0.5)  # 0-1, 0.5 = neutral if not yet assessed
@@ -132,6 +145,7 @@ def rank_papers(
             "novelty": round(nov, 4),
             "academic_value": round(aca, 4),
             "total": round(total, 4),
+            "scoring_mode": scoring_mode,
         }
         scored.append(copy)
 
