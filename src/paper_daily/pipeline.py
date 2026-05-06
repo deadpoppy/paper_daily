@@ -45,6 +45,8 @@ async def run_pipeline(cfg: Config) -> list[dict]:
             days_back=cfg.days_back,
             email=cfg.openalex_email,
             debug=cfg.debug,
+            sources=cfg.sources,
+            resolve_arxiv=cfg.resolve_arxiv,
         )
         # Tag with topic
         for p in papers:

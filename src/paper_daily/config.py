@@ -37,6 +37,10 @@ class Config:
     w_academic_value: float = 0.20
     trim_ratio: float = 0.20  # trim bottom N%% before academic assessment
     debug: bool = False
+    # Search sources: comma-separated list in env, e.g. "arxiv,semantic_scholar"
+    sources: list[str] = field(default_factory=lambda: ["arxiv", "semantic_scholar"])
+    # Whether to resolve non-arXiv papers back to arXiv via extra API calls
+    resolve_arxiv: bool = False
 
 
 def load_config(env_path: Path | None = None) -> Config:
@@ -53,6 +57,9 @@ def load_config(env_path: Path | None = None) -> Config:
     data_dir.mkdir(parents=True, exist_ok=True)
 
     topics = _default_topics()
+
+    sources_str = os.getenv("PAPER_DAILY_SOURCES", "arxiv,semantic_scholar")
+    sources = [s.strip() for s in sources_str.split(",") if s.strip()]
 
     return Config(
         data_dir=data_dir,
@@ -72,6 +79,8 @@ def load_config(env_path: Path | None = None) -> Config:
         w_academic_value=float(os.getenv("W_ACADEMIC_VALUE", "0.20")),
         trim_ratio=float(os.getenv("PAPER_DAILY_TRIM_RATIO", "0.20")),
         debug=os.getenv("PAPER_DAILY_DEBUG", "false").lower() in ("1", "true", "yes"),
+        sources=sources,
+        resolve_arxiv=os.getenv("PAPER_DAILY_RESOLVE_ARXIV", "false").lower() in ("1", "true", "yes"),
     )
 
 

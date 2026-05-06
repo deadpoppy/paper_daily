@@ -582,27 +582,41 @@ async def search_all(
     days_back: int = 180,
     email: str | None = None,
     debug: bool = False,
+    sources: list[str] | None = None,
+    resolve_arxiv: bool = False,
 ) -> list[dict]:
     """Search across multiple academic sources.
 
     * keywords are used for arXiv (structured OR query).
     * query (free-text) is used for OpenAlex, Semantic Scholar, CrossRef.
+    * sources controls which engines to query (default: arxiv, semantic_scholar).
+    * resolve_arxiv triggers expensive title/id resolution via extra arXiv API calls.
     """
     if not keywords:
         keywords = [query] if query else []
     if not query:
         query = " ".join(keywords)
 
+    sources = sources or ["arxiv", "semantic_scholar"]
+    allowed = set(s.lower() for s in sources)
+
     # Semantic Scholar uses '|' for OR semantics; plain space = AND.
     ss_query = _build_ss_query(keywords)
 
-    tasks = [
-        _search_arxiv(keywords, max_results, days_back),
-        _search_openalex(query, max_results, days_back, email),
-        _search_semantic_scholar(ss_query, max_results, days_back),
-        _search_crossref(query, max_results, days_back),
-    ]
-    names = ["arxiv", "openalex", "semantic_scholar", "crossref"]
+    tasks: list[asyncio.Task] = []
+    names: list[str] = []
+
+    source_tasks = {
+        "arxiv": lambda: _search_arxiv(keywords, max_results, days_back),
+        "openalex": lambda: _search_openalex(query, max_results, days_back, email),
+        "semantic_scholar": lambda: _search_semantic_scholar(ss_query, max_results, days_back),
+        "crossref": lambda: _search_crossref(query, max_results, days_back),
+    }
+
+    for name, fn in source_tasks.items():
+        if name in allowed:
+            tasks.append(asyncio.create_task(fn()))
+            names.append(name)
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
     all_papers: list[dict] = []
@@ -621,8 +635,15 @@ async def search_all(
     deduped = _dedup_within_batch(all_papers)
     LOG.info("After cross-source dedup: %d / %d papers", len(deduped), len(all_papers))
 
-    # Resolve non-arXiv papers to arXiv versions; drop those without an arXiv counterpart
-    arxiv_only = await _resolve_arxiv_versions(deduped)
+    if resolve_arxiv:
+        # Expensive: extra arXiv API calls for non-arXiv papers
+        arxiv_only = await _resolve_arxiv_versions(deduped)
+    else:
+        # Fast path: keep arXiv-source papers and any paper that already carries an arxiv_id
+        arxiv_only = [
+            p for p in deduped
+            if (p.get("source") or "").lower() == "arxiv" or p.get("arxiv_id")
+        ]
     LOG.info("After arXiv resolution: %d / %d papers", len(arxiv_only), len(deduped))
 
     # Final date filter (safety net) + sanity year filter
