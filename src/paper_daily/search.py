@@ -671,3 +671,50 @@ async def search_all(
         print("[DEBUG] ====== end search_all ======\n")
 
     return filtered
+
+
+# ---------------------------------------------------------------------------
+# arXiv HTML availability filter
+# ---------------------------------------------------------------------------
+async def filter_arxiv_html_available(
+    papers: list[dict],
+    concurrency: int = 20,
+) -> list[dict]:
+    """Filter papers to only those whose arXiv HTML page exists.
+
+    Papers without an ``arxiv_id`` are kept as-is.
+    For papers with an ``arxiv_id``, a HEAD request to
+    ``https://arxiv.org/html/{arxiv_id}`` is made; only those returning
+    HTTP 200 are kept.
+    """
+    if not papers:
+        return []
+
+    async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def _check(paper: dict) -> tuple[dict, bool]:
+            arxiv_id = paper.get("arxiv_id")
+            if not arxiv_id:
+                return paper, True
+
+            async with semaphore:
+                url = f"https://arxiv.org/html/{arxiv_id}"
+                try:
+                    resp = await client.head(url)
+                    return paper, resp.status_code == 200
+                except Exception as exc:
+                    LOG.warning("HEAD %s failed: %s", url, exc)
+                    return paper, False
+
+        results = await asyncio.gather(*[_check(p) for p in papers])
+
+    kept = [p for p, ok in results if ok]
+    removed = len(papers) - len(kept)
+    if removed:
+        LOG.info(
+            "Filtered out %d/%d papers without arXiv HTML version",
+            removed,
+            len(papers),
+        )
+    return kept

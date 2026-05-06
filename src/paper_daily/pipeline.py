@@ -13,7 +13,7 @@ from paper_daily.dedup import dedup_merge, filter_seen
 from paper_daily.output import format_console, save_outputs
 from paper_daily.ranker import rank_papers
 from paper_daily.reviewer import generate_reasons
-from paper_daily.search import search_all
+from paper_daily.search import filter_arxiv_html_available, search_all
 from paper_daily.summarize import summarize_arxiv_papers
 
 LOG = logging.getLogger("paper_daily.pipeline")
@@ -125,6 +125,19 @@ async def run_pipeline(cfg: Config) -> list[dict]:
         w_novelty=cfg.w_novelty,
         w_academic_value=0.0,  # academic value not yet assessed
     )
+
+    # ------------------------------------------------------------------
+    # 4.5 Filter out papers whose arXiv HTML page does not exist
+    # ------------------------------------------------------------------
+    pre_ranked = await filter_arxiv_html_available(pre_ranked)
+    if not pre_ranked:
+        LOG.warning("No papers with available arXiv HTML after filtering.")
+        return []
+
+    if cfg.debug:
+        print(f"\n[DEBUG] ====== Pipeline stage: arxiv_html_filter ======")
+        print(f"Papers with available arXiv HTML: {len(pre_ranked)}")
+        print("[DEBUG] ==============================================\n")
 
     # Trim bottom N% of all pre-ranked papers, assess the rest
     trim_count = int(len(pre_ranked) * cfg.trim_ratio)
