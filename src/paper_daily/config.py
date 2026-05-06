@@ -35,6 +35,8 @@ class Config:
     w_impact: float = 0.20
     w_novelty: float = 0.20
     w_academic_value: float = 0.20
+    trim_ratio: float = 0.20  # trim bottom N%% before academic assessment
+    debug: bool = False
 
 
 def load_config(env_path: Path | None = None) -> Config:
@@ -68,6 +70,8 @@ def load_config(env_path: Path | None = None) -> Config:
         w_impact=float(os.getenv("W_IMPACT", "0.20")),
         w_novelty=float(os.getenv("W_NOVELTY", "0.20")),
         w_academic_value=float(os.getenv("W_ACADEMIC_VALUE", "0.20")),
+        trim_ratio=float(os.getenv("PAPER_DAILY_TRIM_RATIO", "0.20")),
+        debug=os.getenv("PAPER_DAILY_DEBUG", "false").lower() in ("1", "true", "yes"),
     )
 
 

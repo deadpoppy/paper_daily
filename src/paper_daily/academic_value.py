@@ -106,6 +106,7 @@ async def _assess_one(
     backup_api_key: str | None,
     model: str,
     semaphore: asyncio.Semaphore,
+    debug: bool = False,
 ) -> dict[str, Any]:
     prompt = _build_prompt(paper)
     payload = {
@@ -127,6 +128,11 @@ async def _assess_one(
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         }
+        if debug:
+            print(f"\n[DEBUG] ====== Academic assessment request ======")
+            print(f"Title: {paper.get('title', 'N/A')}")
+            print(f"Payload:\n{payload}")
+            print("[DEBUG] ==========================================\n")
         async with semaphore:
             try:
                 resp = await client.post(
@@ -148,6 +154,14 @@ async def _assess_one(
                         text = content_blocks[0].get("text", "")
                 elif isinstance(content_blocks, str):
                     text = content_blocks
+
+                if debug:
+                    print(f"\n[DEBUG] ====== Academic assessment response ======")
+                    print(f"Title: {paper.get('title', 'N/A')}")
+                    print(f"Raw text:\n{text}")
+                    print(f"Extracted score: {text and _extract_score(text) or 'N/A'}")
+                    print(f"Extracted reason: {text and _extract_reason(text) or 'N/A'}")
+                    print("[DEBUG] ==========================================\n")
 
                 if "<score>" not in text:
                     raise ValueError(f"Missing <score> tag in response: {text[:200]}")
@@ -191,7 +205,8 @@ async def assess_papers(
     db: PaperDatabase,
     backup_api_key: str | None = None,
     model: str = "MiniMax-M2.7",
-    concurrency: int = 6,
+    concurrency: int = 10,
+    debug: bool = False,
 ) -> list[dict[str, Any]]:
     """Run academic-value assessment on a batch of papers (with cache)."""
     if not papers:
@@ -225,11 +240,21 @@ async def assess_papers(
             copy["academic_reason"] = cached["academic_reason"]
             copy["_academic_cached"] = True
             cached_results.append(copy)
+            if debug:
+                print(
+                    f"[DEBUG] Academic cache hit: '{p.get('title', 'N/A')[:60]}' -> "
+                    f"score={cached['academic_score']:.2f}"
+                )
             LOG.debug("Cache hit for '%s'", p.get("title", "")[:40])
         else:
             to_assess.append(p)
 
     LOG.info("Academic assessment: %d cached, %d need API call", len(cached_results), len(to_assess))
+    if debug:
+        print(
+            f"\n[DEBUG] Academic assessment summary: {len(cached_results)} cached, "
+            f"{len(to_assess)} need API call\n"
+        )
 
     if to_assess:
         semaphore = asyncio.Semaphore(concurrency)
@@ -240,7 +265,7 @@ async def assess_papers(
         timeout = httpx.Timeout(180.0, connect=60.0, pool=90.0)
         async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
             tasks = [
-                _assess_one(client, p, api_url, api_key, backup_api_key, model, semaphore)
+                _assess_one(client, p, api_url, api_key, backup_api_key, model, semaphore, debug)
                 for p in to_assess
             ]
             fresh_results = await asyncio.gather(*tasks)

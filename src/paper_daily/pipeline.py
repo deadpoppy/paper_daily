@@ -44,6 +44,7 @@ async def run_pipeline(cfg: Config) -> list[dict]:
             max_results=cfg.max_results_per_source,
             days_back=cfg.days_back,
             email=cfg.openalex_email,
+            debug=cfg.debug,
         )
         # Tag with topic
         for p in papers:
@@ -74,15 +75,35 @@ async def run_pipeline(cfg: Config) -> list[dict]:
         LOG.warning("No papers found. Try relaxing filters or check network.")
         return []
 
+    if cfg.debug:
+        print(f"\n[DEBUG] ====== Pipeline stage: search ======")
+        print(f"Total raw papers from all topics: {len(all_raw)}")
+        for t, res in zip(cfg.topics, results):
+            if isinstance(res, list):
+                print(f"  Topic '{t.key}': {len(res)} papers")
+        print("[DEBUG] ===================================\n")
+
     # ------------------------------------------------------------------
     # 2. Dedup & merge
     # ------------------------------------------------------------------
     merged = dedup_merge(all_raw)
+    if cfg.debug:
+        print(f"\n[DEBUG] ====== Pipeline stage: dedup_merge ======")
+        print(f"Before: {len(all_raw)} raw papers")
+        print(f"After:  {len(merged)} unique papers")
+        print("[DEBUG] ========================================\n")
 
     # ------------------------------------------------------------------
     # 3. Filter already recommended
     # ------------------------------------------------------------------
     new_papers = filter_seen(merged, seen_dois, seen_arxivs, seen_titles)
+    if cfg.debug:
+        print(f"\n[DEBUG] ====== Pipeline stage: filter_seen ======")
+        print(f"Before history filter: {len(merged)} papers")
+        print(f"After history filter:  {len(new_papers)} new papers")
+        if not new_papers:
+            print("No new papers found after history filtering.")
+        print("[DEBUG] ========================================\n")
     if not new_papers:
         LOG.info("No new papers found after history filtering.")
         return []
@@ -103,13 +124,27 @@ async def run_pipeline(cfg: Config) -> list[dict]:
         w_academic_value=0.0,  # academic value not yet assessed
     )
 
-    # Trim bottom 20% of all pre-ranked papers, assess the rest
-    trim_count = int(len(pre_ranked) * 0.2)
+    # Trim bottom N% of all pre-ranked papers, assess the rest
+    trim_count = int(len(pre_ranked) * cfg.trim_ratio)
     candidates = pre_ranked[: len(pre_ranked) - trim_count] if trim_count else pre_ranked
     LOG.info(
-        "Pre-ranked %d papers -> trimmed bottom 20%% (%d) -> %d candidates for academic assessment",
-        len(pre_ranked), trim_count, len(candidates),
+        "Pre-ranked %d papers -> trimmed bottom %.0f%% (%d) -> %d candidates for academic assessment",
+        len(pre_ranked), cfg.trim_ratio * 100, trim_count, len(candidates),
     )
+    if cfg.debug:
+        print(f"\n[DEBUG] ====== Pipeline stage: pre_rank & trim ======")
+        print(f"Pre-ranked: {len(pre_ranked)} papers")
+        print(f"Trim ratio: {cfg.trim_ratio*100:.0f}% -> removed {trim_count} papers")
+        print(f"Candidates for academic assessment: {len(candidates)} papers")
+        print("\nTop 5 after pre-rank:")
+        for i, p in enumerate(pre_ranked[:5], 1):
+            s = p.get("_scores", {})
+            print(
+                f"  {i}. {p.get('title', 'N/A')[:70]} | "
+                f"total={s.get('total')} relevance={s.get('relevance')} "
+                f"recency={s.get('recency')} impact={s.get('impact')} novelty={s.get('novelty')}"
+            )
+        print("[DEBUG] =============================================\n")
 
     # ------------------------------------------------------------------
     # 5. Academic-value assessment (LLM reviewer) — assess ALL candidates
@@ -121,8 +156,19 @@ async def run_pipeline(cfg: Config) -> list[dict]:
         backup_api_key=cfg.academic_value_backup_api_key,
         db=db,
         model=cfg.academic_value_model,
-        concurrency=6,
+        concurrency=10,
+        debug=cfg.debug,
     )
+
+    if cfg.debug:
+        print(f"\n[DEBUG] ====== Pipeline stage: academic assessment done ======")
+        print(f"Assessed candidates: {len(candidates)} papers")
+        print("\nScores distribution:")
+        for i, p in enumerate(candidates, 1):
+            score = p.get("academic_score", 0.5)
+            cached = "(cached)" if p.get("_academic_cached") else "(fresh)"
+            print(f"  {i}. {p.get('title', 'N/A')[:60]} | academic_score={score:.2f} {cached}")
+        print("[DEBUG] ====================================================\n")
 
     # ------------------------------------------------------------------
     # 6. Final ranking (5-dimension with academic_value)
@@ -142,6 +188,21 @@ async def run_pipeline(cfg: Config) -> list[dict]:
     top_papers = final_ranked[: cfg.top_n]
     LOG.info("Final top %d papers selected", len(top_papers))
 
+    if cfg.debug:
+        print(f"\n[DEBUG] ====== Pipeline stage: final_rank ======")
+        print(f"Final ranked: {len(final_ranked)} papers")
+        print(f"Selected top: {len(top_papers)} papers")
+        print("\nTop papers after final ranking:")
+        for i, p in enumerate(top_papers, 1):
+            s = p.get("_scores", {})
+            print(
+                f"  {i}. {p.get('title', 'N/A')[:70]} | "
+                f"total={s.get('total')} relevance={s.get('relevance')} "
+                f"recency={s.get('recency')} impact={s.get('impact')} "
+                f"novelty={s.get('novelty')} academic_value={s.get('academic_value')}"
+            )
+        print("[DEBUG] =====================================\n")
+
     # ------------------------------------------------------------------
     # 7. Generate Chinese reasons (for the final top papers)
     # ------------------------------------------------------------------
@@ -152,6 +213,7 @@ async def run_pipeline(cfg: Config) -> list[dict]:
         backup_api_key=cfg.academic_value_backup_api_key,
         model=cfg.academic_value_model,
         concurrency=6,
+        debug=cfg.debug,
     )
 
     # ------------------------------------------------------------------

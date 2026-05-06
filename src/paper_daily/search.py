@@ -650,6 +650,7 @@ async def search_all(
     max_results: int = 50,
     days_back: int = 180,
     email: str | None = None,
+    debug: bool = False,
 ) -> list[dict]:
     """Search across multiple academic sources.
 
@@ -704,4 +705,17 @@ async def search_all(
         reverse=True,
     )
     LOG.info("After date filter: %d / %d papers", len(filtered), len(arxiv_only))
+
+    if debug:
+        print(f"\n[DEBUG] ====== search_all results ({len(filtered)} papers) ======")
+        for i, p in enumerate(filtered, 1):
+            print(
+                f"  {i}. {p.get('title', 'N/A')} | "
+                f"source={p.get('source')} | "
+                f"arxiv_id={p.get('arxiv_id')} | "
+                f"doi={p.get('doi')} | "
+                f"published={p.get('published_date')}"
+            )
+        print("[DEBUG] ====== end search_all ======\n")
+
     return filtered

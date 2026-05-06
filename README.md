@@ -88,6 +88,9 @@ paper-daily run --env /path/to/.env
 # 详细日志
 paper-daily run -v
 
+# Debug 模式：打印搜索到的论文、评估请求/返回、筛选详情
+paper-daily run --debug
+
 # 查看历史推荐
 paper-daily history
 paper-daily history --days 7 -f markdown
@@ -300,6 +303,8 @@ GROUP BY p.sources;
 | `PAPER_DAILY_TOP_N` | `10` | 每天推荐数量 |
 | `PAPER_DAILY_MAX_RESULTS` | `50` | 每源每主题最大搜索条数 |
 | `PAPER_DAILY_DAYS_BACK` | `180` | 回溯天数 |
+| `PAPER_DAILY_TRIM_RATIO` | `0.20` | 学术评估前剪掉排名最低的比例（0=不剪, 0.2=剪20%%） |
+| `PAPER_DAILY_DEBUG` | `false` | Debug 模式：打印搜索到的论文、LLM 评估请求/返回、各阶段筛选详情 |
 | `ACADEMIC_VALUE_URL` | — | 统一 LLM API base URL（Anthropic-compatible） |
 | `ACADEMIC_VALUE_API_KEY` | — | 统一 LLM API key |
 | `ACADEMIC_VALUE_MODEL` | `MiniMax-M2.7` | 统一 LLM 模型名 |

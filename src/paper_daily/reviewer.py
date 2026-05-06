@@ -39,10 +39,16 @@ async def _call_anthropic_compatible(
     model: str,
     semaphore: asyncio.Semaphore,
     client: httpx.AsyncClient,
+    debug: bool = False,
 ) -> str:
     keys = [k for k in (api_key, backup_api_key) if k]
     key_idx = 0
     attempt = 0
+
+    if debug:
+        print(f"\n[DEBUG] ====== Reason generation request ======")
+        print(f"Prompt:\n{prompt}")
+        print("[DEBUG] ========================================\n")
 
     while True:
         key = keys[key_idx]
@@ -67,12 +73,23 @@ async def _call_anthropic_compatible(
                 data = resp.json()
 
                 content_blocks = data.get("content", [])
+                text = ""
                 if isinstance(content_blocks, list) and content_blocks:
                     for block in content_blocks:
                         if block.get("type") == "text":
-                            return block.get("text", "").strip()
-                    return content_blocks[0].get("text", "").strip()
-                return str(content_blocks).strip()
+                            text = block.get("text", "").strip()
+                            break
+                    if not text:
+                        text = content_blocks[0].get("text", "").strip()
+                else:
+                    text = str(content_blocks).strip()
+
+                if debug:
+                    print(f"\n[DEBUG] ====== Reason generation response ======")
+                    print(f"Raw text:\n{text}")
+                    print("[DEBUG] ========================================\n")
+
+                return text
             except Exception as e:
                 wait = min(2 ** attempt, 30)
                 LOG.warning(
@@ -95,6 +112,7 @@ async def generate_reasons(
     backup_api_key: str | None = None,
     model: str = "MiniMax-M2.7",
     concurrency: int = 6,
+    debug: bool = False,
 ) -> list[dict]:
     """Attach Chinese recommendation reason to each paper (concurrent)."""
     if not papers:
@@ -115,11 +133,15 @@ async def generate_reasons(
     async def _reason_one(paper: dict) -> dict:
         prompt = _build_prompt(paper)
         reason = await _call_anthropic_compatible(
-            prompt, base_url, api_key, backup_api_key, model, semaphore, client
+            prompt, base_url, api_key, backup_api_key, model, semaphore, client, debug
         )
         reason = reason.strip('"').strip("'").strip()
         copy = dict(paper)
         copy["reason_zh"] = reason
+        if debug:
+            print(
+                f"[DEBUG] Generated reason for '{paper.get('title', 'N/A')[:60]}': {reason[:80]}..."
+            )
         LOG.debug("Generated reason for '%s...'", paper.get("title", "")[:40])
         return copy
 

@@ -34,6 +34,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.data_dir is not None:
         cfg.data_dir = Path(args.data_dir).resolve()
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
+    if args.trim_ratio is not None:
+        cfg.trim_ratio = args.trim_ratio
+    if args.debug:
+        cfg.debug = True
 
     papers = run(cfg)
     return 0 if papers else 1
@@ -90,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
     run_p = sub.add_parser("run", help="Run the daily recommendation pipeline")
     run_p.add_argument("-n", "--top-n", type=int, default=None, help="Number of papers to recommend")
     run_p.add_argument("-d", "--days", type=int, default=None, help="Look back N days (default: 180)")
+    run_p.add_argument("--trim-ratio", type=float, default=0.2, help="Trim bottom N ratio before assessment, e.g. 0.2 for 20%% (default: 0.2)")
+    run_p.add_argument("--debug", action="store_true", help="Enable debug output: searched papers, LLM requests/responses, and filtering details")
     run_p.set_defaults(func=cmd_run)
 
     # history
