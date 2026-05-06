@@ -13,7 +13,7 @@ LOG = logging.getLogger("paper_daily.reviewer")
 def _build_prompt(paper: dict) -> str:
     title = paper.get("title", "")
     authors = ", ".join(paper.get("authors", [])[:3])
-    abstract = (paper.get("abstract") or paper.get("tldr") or "")[:500]
+    abstract = (paper.get("abstract") or paper.get("tldr") or "").strip()
     venue = paper.get("venue", "")
     sources = paper.get("source", "")
 
@@ -37,6 +37,8 @@ async def _call_anthropic_compatible(
     api_key: str,
     backup_api_key: str | None,
     model: str,
+    semaphore: asyncio.Semaphore,
+    client: httpx.AsyncClient,
 ) -> str:
     keys = [k for k in (api_key, backup_api_key) if k]
     key_idx = 0
@@ -51,11 +53,11 @@ async def _call_anthropic_compatible(
         }
         payload = {
             "model": model,
-            "max_tokens": 256,
+            "max_tokens": 2048,
             "messages": [{"role": "user", "content": prompt}],
         }
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
+        async with semaphore:
+            try:
                 resp = await client.post(
                     f"{base_url.rstrip('/')}/v1/messages",
                     headers=headers,
@@ -71,19 +73,19 @@ async def _call_anthropic_compatible(
                             return block.get("text", "").strip()
                     return content_blocks[0].get("text", "").strip()
                 return str(content_blocks).strip()
-        except Exception as e:
-            wait = min(2 ** attempt, 30)
-            LOG.warning(
-                "LLM reason generation attempt %d failed with key %d: %s. Retrying in %ds...",
-                attempt + 1,
-                key_idx + 1,
-                type(e).__name__,
-                wait,
-            )
-            await asyncio.sleep(wait)
-            attempt += 1
-            if len(keys) > 1:
-                key_idx = (key_idx + 1) % len(keys)
+            except Exception as e:
+                wait = min(2 ** attempt, 30)
+                LOG.warning(
+                    "LLM reason generation attempt %d failed with key %d: %s. Retrying in %ds...",
+                    attempt + 1,
+                    key_idx + 1,
+                    type(e).__name__,
+                    wait,
+                )
+                await asyncio.sleep(wait)
+                attempt += 1
+                if len(keys) > 1:
+                    key_idx = (key_idx + 1) % len(keys)
 
 
 async def generate_reasons(
@@ -92,8 +94,9 @@ async def generate_reasons(
     api_key: str | None = None,
     backup_api_key: str | None = None,
     model: str = "MiniMax-M2.7",
+    concurrency: int = 6,
 ) -> list[dict]:
-    """Attach Chinese recommendation reason to each paper."""
+    """Attach Chinese recommendation reason to each paper (concurrent)."""
     if not papers:
         return papers
 
@@ -102,17 +105,29 @@ async def generate_reasons(
         LOG.info("No LLM API configured, using fallback reasons")
         return [_fallback_reason(p) for p in papers]
 
-    results = []
-    for p in papers:
-        prompt = _build_prompt(p)
-        reason = await _call_anthropic_compatible(prompt, base_url, api_key, backup_api_key, model)
-        # Clean up quotes
+    semaphore = asyncio.Semaphore(concurrency)
+    limits = httpx.Limits(
+        max_connections=max(50, concurrency * 5),
+        max_keepalive_connections=max(20, concurrency * 3),
+    )
+    timeout = httpx.Timeout(180.0, connect=60.0, pool=90.0)
+
+    async def _reason_one(paper: dict) -> dict:
+        prompt = _build_prompt(paper)
+        reason = await _call_anthropic_compatible(
+            prompt, base_url, api_key, backup_api_key, model, semaphore, client
+        )
         reason = reason.strip('"').strip("'").strip()
-        copy = dict(p)
+        copy = dict(paper)
         copy["reason_zh"] = reason
-        results.append(copy)
-        LOG.debug("Generated reason for '%s...'", p.get("title", "")[:40])
-    return results
+        LOG.debug("Generated reason for '%s...'", paper.get("title", "")[:40])
+        return copy
+
+    async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
+        tasks = [asyncio.create_task(_reason_one(p)) for p in papers]
+        results = await asyncio.gather(*tasks)
+
+    return list(results)
 
 
 def _fallback_reason(paper: dict) -> dict:

@@ -142,6 +142,18 @@ paper-daily run
 4. **新颖度**：从未推荐过=1.0，已推荐过=0.0。
 5. **学术价值**：LLM 审稿人 0–10 分归一化到 [0,1]。
 
+## 🧠 LLM Prompt 配置
+
+项目中共有 **3 处**直接调用 LLM，Prompt 均内嵌在源码中，修改对应文件即可调整：
+
+| 用途 | 文件 | Prompt 类型 | 关键变量/函数 |
+|------|------|-------------|---------------|
+| **学术价值评估** | `src/paper_daily/academic_value.py` | System + User | `_SYSTEM_PROMPT`（评分标准 0–10）<br>`_build_prompt()`（单篇论文输入） |
+| **中文推荐理由** | `src/paper_daily/reviewer.py` | User | `_build_prompt()`（2–3 句推荐理由） |
+| **论文深度总结** | `src/paper_daily/summarize.py` | User | `_run_one()` 中的 `prompt`（调用 hermes CLI 的 arxiv2md-summarize skill） |
+
+> 学术评估和推荐理由共用同一组 API 配置（`ACADEMIC_VALUE_URL` / `API_KEY` / `MODEL`）。
+
 ### 学术评估候选池
 
 1. 对所有新论文做 4D 预排序（不含学术价值）

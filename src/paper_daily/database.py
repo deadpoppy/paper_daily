@@ -45,6 +45,8 @@ CREATE INDEX IF NOT EXISTS idx_rec_date ON recommendations(recommend_date);
 CREATE TABLE IF NOT EXISTS academic_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     content_hash TEXT UNIQUE NOT NULL,
+    arxiv_id TEXT,
+    doi TEXT,
     title TEXT,
     academic_score REAL NOT NULL,
     academic_reason TEXT,
@@ -52,6 +54,8 @@ CREATE TABLE IF NOT EXISTS academic_cache (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cache_hash ON academic_cache(content_hash);
+CREATE INDEX IF NOT EXISTS idx_cache_arxiv ON academic_cache(arxiv_id);
+CREATE INDEX IF NOT EXISTS idx_cache_doi ON academic_cache(doi);
 """
 
 
@@ -240,17 +244,43 @@ class PaperDatabase:
             ).fetchone()
             return dict(row) if row else None
 
-    def set_academic_cache(self, content_hash: str, title: str, score: float, reason: str) -> None:
+    def get_academic_cache_by_arxiv_id(self, arxiv_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT academic_score, academic_reason FROM academic_cache WHERE arxiv_id = ?",
+                (arxiv_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_academic_cache_by_doi(self, doi: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT academic_score, academic_reason FROM academic_cache WHERE doi = ?",
+                (doi,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def set_academic_cache(
+        self,
+        content_hash: str,
+        arxiv_id: str | None,
+        doi: str | None,
+        title: str,
+        score: float,
+        reason: str,
+    ) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO academic_cache (content_hash, title, academic_score, academic_reason)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO academic_cache (content_hash, arxiv_id, doi, title, academic_score, academic_reason)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(content_hash) DO UPDATE SET
+                    arxiv_id=COALESCE(excluded.arxiv_id, arxiv_id),
+                    doi=COALESCE(excluded.doi, doi),
                     academic_score=excluded.academic_score,
                     academic_reason=excluded.academic_reason,
                     created_at=CURRENT_TIMESTAMP
                 """,
-                (content_hash, title, score, reason),
+                (content_hash, arxiv_id, doi, title, score, reason),
             )
             conn.commit()

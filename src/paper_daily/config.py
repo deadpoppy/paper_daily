@@ -75,7 +75,7 @@ def _default_topics() -> list[Topic]:
     """Default AI-related search topics (broad coverage)."""
     return [
         Topic("llm", "Large Language Models", ["large language model", "LLM", "transformer", "reasoning", "in-context learning"]),
-        Topic("vision", "Computer Vision", ["computer vision", "diffusion model", "image generation", "segmentation", "object detection"]),
+        # Topic("vision", "Computer Vision", ["computer vision", "diffusion model", "image generation", "segmentation", "object detection"]),
         Topic("rl", "Reinforcement Learning", ["reinforcement learning", "RLHF", "PPO", "Q-learning", "policy gradient"]),
         Topic("multimodal", "Multimodal Learning", ["multimodal", "vision-language model", "cross-modal", "audio-visual"]),
         Topic("agent", "AI Agents", ["AI agent", "autonomous agent", "tool use", "planning", "multi-agent"]),

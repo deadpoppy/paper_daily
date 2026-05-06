@@ -121,7 +121,7 @@ async def run_pipeline(cfg: Config) -> list[dict]:
         backup_api_key=cfg.academic_value_backup_api_key,
         db=db,
         model=cfg.academic_value_model,
-        concurrency=3,
+        concurrency=6,
     )
 
     # ------------------------------------------------------------------
@@ -151,6 +151,7 @@ async def run_pipeline(cfg: Config) -> list[dict]:
         api_key=cfg.academic_value_api_key,
         backup_api_key=cfg.academic_value_backup_api_key,
         model=cfg.academic_value_model,
+        concurrency=6,
     )
 
     # ------------------------------------------------------------------

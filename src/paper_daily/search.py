@@ -91,6 +91,54 @@ def _build_ss_query(keywords: list[str]) -> str:
 _ARXIV_LOCK = asyncio.Lock()
 
 
+def _parse_arxiv_entry(entry, ns: dict[str, str]) -> dict:
+    """Parse a single arXiv Atom <entry> into a paper dict."""
+    title = entry.findtext("atom:title", "", namespaces=ns).replace("\n", " ").strip()
+    summary = (entry.findtext("atom:summary", "", namespaces=ns) or "")
+    published = entry.findtext("atom:published", "", namespaces=ns)
+    arxiv_id = ""
+    id_el = entry.find("atom:id", ns)
+    if id_el is not None and id_el.text:
+        raw_id = id_el.text.split("/")[-1]
+        arxiv_id = raw_id.split("v")[0]
+    doi = ""
+    doi_el = entry.find("arxiv:doi", ns)
+    if doi_el is not None and doi_el.text:
+        doi = doi_el.text
+    authors = []
+    for author in entry.findall("atom:author", ns):
+        name = author.findtext("atom:name", "", namespaces=ns)
+        if name:
+            authors.append(name)
+    pdf_url = ""
+    for link in entry.findall("atom:link", ns):
+        if link.get("title") == "pdf":
+            pdf_url = link.get("href", "")
+            break
+    year = None
+    pub_date = None
+    if published:
+        try:
+            dt = datetime.strptime(published[:10], "%Y-%m-%d")
+            year = dt.year
+            pub_date = dt.strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return {
+        "title": title,
+        "year": year,
+        "published_date": pub_date,
+        "arxiv_id": arxiv_id,
+        "doi": doi,
+        "citation_count": 0,
+        "authors": authors[:5],
+        "abstract": summary,
+        "venue": "arXiv",
+        "url": pdf_url or (f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else ""),
+        "source": "arxiv",
+    }
+
+
 async def _search_arxiv(keywords: list[str], max_results: int = 50, days_back: int = 180) -> list[dict]:
     q = _build_arxiv_query(keywords, days_back)
     url = "https://export.arxiv.org/api/query"
@@ -133,50 +181,7 @@ async def _search_arxiv(keywords: list[str], max_results: int = 50, days_back: i
                             break  # No more results
 
                         for entry in entries:
-                            title = entry.findtext("atom:title", "", namespaces=ns).replace("\n", " ").strip()
-                            summary = (entry.findtext("atom:summary", "", namespaces=ns) or "")[:600]
-                            published = entry.findtext("atom:published", "", namespaces=ns)
-                            arxiv_id = ""
-                            id_el = entry.find("atom:id", ns)
-                            if id_el is not None and id_el.text:
-                                raw_id = id_el.text.split("/")[-1]
-                                arxiv_id = raw_id.split("v")[0]
-                            doi = ""
-                            doi_el = entry.find("arxiv:doi", ns)
-                            if doi_el is not None and doi_el.text:
-                                doi = doi_el.text
-                            authors = []
-                            for author in entry.findall("atom:author", ns):
-                                name = author.findtext("atom:name", "", namespaces=ns)
-                                if name:
-                                    authors.append(name)
-                            pdf_url = ""
-                            for link in entry.findall("atom:link", ns):
-                                if link.get("title") == "pdf":
-                                    pdf_url = link.get("href", "")
-                                    break
-                            year = None
-                            pub_date = None
-                            if published:
-                                try:
-                                    dt = datetime.strptime(published[:10], "%Y-%m-%d")
-                                    year = dt.year
-                                    pub_date = dt.strftime("%Y-%m-%d")
-                                except ValueError:
-                                    pass
-                            papers.append({
-                                "title": title,
-                                "year": year,
-                                "published_date": pub_date,
-                                "arxiv_id": arxiv_id,
-                                "doi": doi,
-                                "citation_count": 0,
-                                "authors": authors[:5],
-                                "abstract": summary,
-                                "venue": "arXiv",
-                                "url": pdf_url or (f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else ""),
-                                "source": "arxiv",
-                            })
+                            papers.append(_parse_arxiv_entry(entry, ns))
                         break  # Success, exit retry loop
                     except Exception as e:
                         # Respect official interval even on transient errors; never give up.
@@ -258,7 +263,7 @@ async def _search_openalex(
                             "doi": doi,
                             "citation_count": w.get("cited_by_count", 0) or 0,
                             "authors": authors,
-                            "abstract": (w.get("abstract") or "")[:600],
+                            "abstract": (w.get("abstract") or ""),
                             "venue": source_name,
                             "url": pdf_url or (f"https://doi.org/{doi}" if doi else ""),
                             "source": "openalex",
@@ -325,7 +330,7 @@ async def _search_semantic_scholar(
                                 "arxiv_id": ext.get("ArXiv", ""),
                                 "citation_count": p.get("citationCount", 0) or 0,
                                 "authors": [a.get("name", "") for a in (p.get("authors") or [])[:5]],
-                                "abstract": (p.get("abstract") or "")[:600],
+                                "abstract": (p.get("abstract") or ""),
                                 "venue": p.get("venue", ""),
                                 "url": (p.get("openAccessPdf") or {}).get("url", "")
                                      or (f"https://arxiv.org/abs/{ext.get('ArXiv', '')}" if ext.get("ArXiv") else "")
@@ -384,7 +389,7 @@ async def _search_crossref(
                         family = au.get("family", "")
                         authors.append(f"{given} {family}".strip())
                     raw_abstract = item.get("abstract", "") or ""
-                    clean_abstract = re.sub(r"<[^>]+>", "", raw_abstract).strip()[:600]
+                    clean_abstract = re.sub(r"<[^>]+>", "", raw_abstract).strip()
                     papers.append({
                         "title": item.get("title", [""])[0],
                         "year": year,
@@ -403,6 +408,187 @@ async def _search_crossref(
         except Exception as e:
             LOG.warning("CrossRef error: %s", e)
     return papers
+
+
+# ---------------------------------------------------------------------------
+# arXiv resolution helpers
+# ---------------------------------------------------------------------------
+async def _fetch_arxiv_by_ids(arxiv_ids: list[str]) -> dict[str, dict]:
+    """Batch-fetch arXiv papers by their IDs using id_list parameter.
+
+    Returns a dict mapping lowercase arxiv_id -> paper dict.
+    """
+    if not arxiv_ids:
+        return {}
+
+    url = "https://export.arxiv.org/api/query"
+    ns = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+    result: dict[str, dict] = {}
+
+    unique_ids = list(dict.fromkeys(arxiv_ids))
+
+    async with _ARXIV_LOCK:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            for i in range(0, len(unique_ids), 50):
+                batch = unique_ids[i : i + 50]
+                ids_str = ",".join(batch)
+                attempt = 0
+                while True:
+                    try:
+                        resp = await client.get(url, params={"id_list": ids_str, "max_results": len(batch)})
+                        if resp.status_code == 429:
+                            wait = max(3, min(2 ** attempt * 2, 120))
+                            LOG.warning(
+                                "arXiv id_list rate limited, retry in %ds (attempt %d)", wait, attempt + 1
+                            )
+                            await asyncio.sleep(wait)
+                            attempt += 1
+                            continue
+                        resp.raise_for_status()
+                        root = ET.fromstring(resp.text)
+                        for entry in root.findall("atom:entry", ns):
+                            paper = _parse_arxiv_entry(entry, ns)
+                            if paper.get("arxiv_id"):
+                                result[paper["arxiv_id"].lower()] = paper
+                        break
+                    except Exception as e:
+                        wait = max(3, min(2 ** attempt * 2, 120))
+                        LOG.warning("arXiv id_list error (attempt %d): %s, retry in %ds", attempt + 1, e, wait)
+                        await asyncio.sleep(wait)
+                        attempt += 1
+                await asyncio.sleep(3)
+            await asyncio.sleep(3)
+    return result
+
+
+async def _search_arxiv_by_title(title: str) -> dict | None:
+    """Search arXiv for a paper by exact title. Returns paper dict if found, else None."""
+    if not title or len(title) < 5:
+        return None
+
+    url = "https://export.arxiv.org/api/query"
+    ns = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+
+    safe_title = title.replace('"', "").strip()
+    q = f'ti:"{safe_title}"'
+
+    async with _ARXIV_LOCK:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            attempt = 0
+            while True:
+                try:
+                    resp = await client.get(url, params={"search_query": q, "start": 0, "max_results": 10})
+                    if resp.status_code == 429:
+                        wait = max(3, min(2 ** attempt * 2, 120))
+                        LOG.warning(
+                            "arXiv title search rate limited, retry in %ds (attempt %d)", wait, attempt + 1
+                        )
+                        await asyncio.sleep(wait)
+                        attempt += 1
+                        continue
+                    resp.raise_for_status()
+                    root = ET.fromstring(resp.text)
+                    entries = root.findall("atom:entry", ns)
+                    if not entries:
+                        return None
+
+                    search_norm = re.sub(r"[^\w]", "", title.lower())
+                    best = None
+                    best_score = 0
+
+                    for entry in entries:
+                        entry_title = (
+                            entry.findtext("atom:title", "", namespaces=ns).replace("\n", " ").strip()
+                        )
+                        entry_norm = re.sub(r"[^\w]", "", entry_title.lower())
+                        if entry_norm == search_norm:
+                            best = entry
+                            break
+                        if search_norm in entry_norm or entry_norm in search_norm:
+                            score = len(set(search_norm) & set(entry_norm))
+                            if score > best_score:
+                                best_score = score
+                                best = entry
+
+                    if best is None:
+                        return None
+
+                    return _parse_arxiv_entry(best, ns)
+
+                except Exception as e:
+                    wait = max(3, min(2 ** attempt * 2, 120))
+                    LOG.warning("arXiv title search error (attempt %d): %s, retry in %ds", attempt + 1, e, wait)
+                    await asyncio.sleep(wait)
+                    attempt += 1
+
+
+async def _resolve_arxiv_versions(papers: list[dict]) -> list[dict]:
+    """For non-arXiv papers, try to find their arXiv versions.
+
+    Papers that already come from arXiv are kept as-is.
+    Non-arXiv papers with an arxiv_id are batch-resolved via id_list.
+    Non-arXiv papers without an arxiv_id are searched by title one-by-one.
+
+    Returns only papers that have a valid arXiv entry (either original or resolved).
+    """
+    arxiv_papers: list[dict] = []
+    non_arxiv: list[dict] = []
+
+    for p in papers:
+        if (p.get("source") or "").lower() == "arxiv":
+            arxiv_papers.append(dict(p))
+        else:
+            non_arxiv.append(dict(p))
+
+    if not non_arxiv:
+        return arxiv_papers
+
+    # Phase 1: batch-resolve papers that already have an arxiv_id
+    with_ids = [p for p in non_arxiv if p.get("arxiv_id")]
+    without_ids = [p for p in non_arxiv if not p.get("arxiv_id")]
+
+    resolved_by_id: dict[str, dict] = {}
+    if with_ids:
+        id_list = [p["arxiv_id"] for p in with_ids]
+        LOG.info("Resolving %d non-arXiv papers by arxiv_id...", len(with_ids))
+        resolved_by_id = await _fetch_arxiv_by_ids(id_list)
+        LOG.info("Resolved %d/%d by arxiv_id", len(resolved_by_id), len(with_ids))
+
+    # Phase 2: title search for remaining papers
+    resolved_by_title: list[dict] = []
+    if without_ids:
+        LOG.info("Searching arXiv by title for %d papers...", len(without_ids))
+        for idx, p in enumerate(without_ids):
+            arxiv_paper = await _search_arxiv_by_title(p.get("title", ""))
+            if arxiv_paper:
+                if not arxiv_paper.get("citation_count") and p.get("citation_count"):
+                    arxiv_paper["citation_count"] = p["citation_count"]
+                if not arxiv_paper.get("doi") and p.get("doi"):
+                    arxiv_paper["doi"] = p["doi"]
+                resolved_by_title.append(arxiv_paper)
+                LOG.debug(
+                    "Title search resolved: %s -> %s", p.get("title", "")[:60], arxiv_paper.get("arxiv_id")
+                )
+            else:
+                LOG.debug("Title search missed: %s", p.get("title", "")[:60])
+            if (idx + 1) % 5 == 0:
+                LOG.info("Title search progress: %d/%d", idx + 1, len(without_ids))
+
+    final: list[dict] = list(arxiv_papers)
+
+    for p in with_ids:
+        arxiv_id = (p.get("arxiv_id") or "").lower()
+        if arxiv_id in resolved_by_id:
+            arxiv_paper = dict(resolved_by_id[arxiv_id])
+            if not arxiv_paper.get("citation_count") and p.get("citation_count"):
+                arxiv_paper["citation_count"] = p["citation_count"]
+            if not arxiv_paper.get("doi") and p.get("doi"):
+                arxiv_paper["doi"] = p["doi"]
+            final.append(arxiv_paper)
+
+    final.extend(resolved_by_title)
+
+    return final
 
 
 # ---------------------------------------------------------------------------
@@ -503,9 +689,13 @@ async def search_all(
     deduped = _dedup_within_batch(all_papers)
     LOG.info("After cross-source dedup: %d / %d papers", len(deduped), len(all_papers))
 
+    # Resolve non-arXiv papers to arXiv versions; drop those without an arXiv counterpart
+    arxiv_only = await _resolve_arxiv_versions(deduped)
+    LOG.info("After arXiv resolution: %d / %d papers", len(arxiv_only), len(deduped))
+
     # Final date filter (safety net) + sanity year filter
     filtered = [
-        p for p in deduped
+        p for p in arxiv_only
         if _is_within_days(p.get("published_date"), days_back) and _sane_year(p)
     ]
     # Sort by publication date descending so the most recent papers come first
@@ -513,5 +703,5 @@ async def search_all(
         key=lambda p: p.get("published_date") or "0000-00-00",
         reverse=True,
     )
-    LOG.info("After date filter: %d / %d papers", len(filtered), len(deduped))
+    LOG.info("After date filter: %d / %d papers", len(filtered), len(arxiv_only))
     return filtered

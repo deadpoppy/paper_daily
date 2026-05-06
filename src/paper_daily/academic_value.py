@@ -29,14 +29,13 @@ _SYSTEM_PROMPT = (
     "• 8–9 分：核心创新清晰，方法有坚实理论支撑，实验设计严谨，拓展性强，对领域有显著推动。\n"
     "• 6–7 分：有明确贡献，方法或实验有一定新意，但属于增量式改进，拓展性一般。\n"
     "• 4–5 分：idea 平庸，主要是对现有方法的简单组合/拼接，实验勉强及格。\n"
-    "• 2–3 分：水文特征明显，缺乏实质性创新，实验不充分或不可靠。\n"
+    "• 2–3 分：水文特征明显，缺乏实质性创新，不充分或不可靠。\n"
     "• 0–1 分：学术欺诈、严重错误、纯粹灌水。\n\n"
     "请重点考察以下维度：\n"
     "1. 核心创新：是否提出了新的问题、新的方法或新的理论视角？\n"
     "2. 方法深度：是否有扎实的理论分析或精巧的算法设计？\n"
-    "3. 实验质量：实验是否充分验证了核心 claim？\n"
-    "4. 拓展性：这个工作是否能启发后续研究？是否容易被应用到其他场景？\n"
-    "5. 区分度：与现有方法相比，优势是否显著且令人信服？\n\n"
+    "3. 拓展性：这个工作是否能启发后续研究？是否容易被应用到其他场景？\n"
+    "4. 区分度：与现有方法相比，优势是否显著且令人信服？\n\n"
     "注意事项：\n"
     "• 不要因为方向热门就给高分，也不要因为方向小众就给低分。\n"
     "• 对于标题党、摘要夸大但实际内容空洞的论文，请给出低分。\n"
@@ -67,7 +66,7 @@ def _build_prompt(paper: dict[str, Any]) -> str:
     if venue:
         lines.append(f"来源：{venue}")
     if abstract:
-        lines.append(f"摘要：{abstract[:900]}")
+        lines.append(f"摘要：{abstract}")
     lines.extend([
         "",
         "请给出学术价值评分（0–10）。",
@@ -111,7 +110,7 @@ async def _assess_one(
     prompt = _build_prompt(paper)
     payload = {
         "model": model,
-        "max_tokens": 512,
+        "max_tokens": 4096,
         "messages": [{"role": "user", "content": prompt}],
         "system": _SYSTEM_PROMPT,
     }
@@ -192,7 +191,7 @@ async def assess_papers(
     db: PaperDatabase,
     backup_api_key: str | None = None,
     model: str = "MiniMax-M2.7",
-    concurrency: int = 3,
+    concurrency: int = 6,
 ) -> list[dict[str, Any]]:
     """Run academic-value assessment on a batch of papers (with cache)."""
     if not papers:
@@ -204,12 +203,22 @@ async def assess_papers(
             p.setdefault("academic_reason", "未配置学术评估 API")
         return papers
 
-    # Split into cached vs uncached
+    # Split into cached vs uncached (try arxiv_id > doi > content_hash)
     to_assess: list[dict[str, Any]] = []
     cached_results: list[dict[str, Any]] = []
     for p in papers:
-        h = _content_hash(p)
-        cached = db.get_academic_cache(h)
+        cached = None
+        arxiv_id = p.get("arxiv_id")
+        if arxiv_id:
+            cached = db.get_academic_cache_by_arxiv_id(arxiv_id)
+        if not cached:
+            doi = p.get("doi")
+            if doi:
+                cached = db.get_academic_cache_by_doi(doi)
+        if not cached:
+            h = _content_hash(p)
+            cached = db.get_academic_cache(h)
+
         if cached:
             copy = dict(p)
             copy["academic_score"] = cached["academic_score"]
@@ -240,6 +249,8 @@ async def assess_papers(
         for p in fresh_results:
             db.set_academic_cache(
                 _content_hash(p),
+                p.get("arxiv_id"),
+                p.get("doi"),
                 p.get("title", ""),
                 p.get("academic_score", 0.5),
                 p.get("academic_reason", ""),
