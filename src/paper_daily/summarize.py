@@ -20,7 +20,7 @@ def _get_summarizer() -> tuple[str, list[str]]:
     if backend == "kimi-cli":
         return "kimi-cli", ["-p"]
     # default claude
-    return "claude", ["-p"]
+    return "claude", ["-p", "--dangerously-skip-permissions"]
 
 
 def _sanitize_filename(title: str) -> str:
