@@ -128,7 +128,7 @@ def rank_papers(
         # Impact: relative citation with steep decay (square)
         citations = p.get("citation_count", 0) or 0
         relative = citations / max_citations
-        imp = relative ** 2  # steep decay: 0.5 -> 0.25, 0.25 -> 0.0625
+        imp = relative ** 1.8  # steep decay: 0.5 -> 0.25, 0.25 -> 0.0625
 
         total = (
             w_relevance * rel

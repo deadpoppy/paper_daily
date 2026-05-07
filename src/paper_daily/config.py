@@ -114,5 +114,6 @@ def _default_topics() -> list[Topic]:
             "multi-modal discrete autoencoder speech text",
             "discrete speech representation",
             "speech language model tokenizer",
+            "speech tokenizer",
         ]),
     ]

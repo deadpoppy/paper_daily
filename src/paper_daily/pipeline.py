@@ -35,7 +35,7 @@ async def run_pipeline(cfg: Config) -> list[dict]:
 
     # Build search queries from topic keywords
     async def _search_topic(topic):
-        keywords = topic.keywords[:3]
+        keywords = topic.keywords
         query = " ".join(keywords)
         LOG.info("Searching topic '%s': %s", topic.key, query)
         papers = await search_all(
