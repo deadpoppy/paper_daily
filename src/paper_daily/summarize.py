@@ -1,12 +1,26 @@
-"""Summarize arXiv papers via hermes CLI and save to ~/.paper_md/."""
+"""Summarize arXiv papers via CLI tool and save to ~/.paper_md/."""
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from pathlib import Path
 
 LOG = logging.getLogger("paper_daily.summarize")
+
+_DEFAULT_SUMMARIZER = "claude"
+
+
+def _get_summarizer() -> tuple[str, list[str]]:
+    """Return (program, extra_args) based on PAPER_DAILY_SUMMARIZER env var."""
+    backend = os.getenv("PAPER_DAILY_SUMMARIZER", _DEFAULT_SUMMARIZER).strip().lower()
+    if backend == "hermes":
+        return "hermes", ["chat", "-q"]
+    if backend == "kimi-cli":
+        return "kimi-cli", ["-p"]
+    # default claude
+    return "claude", ["-p"]
 
 
 def _sanitize_filename(title: str) -> str:
@@ -38,7 +52,7 @@ async def summarize_arxiv_papers(
     output_dir: Path | None = None,
     concurrency: int = 1,
 ) -> list[dict]:
-    """For each arXiv paper, invoke hermes to produce an MD summary.
+    """For each arXiv paper, invoke a CLI summarizer to produce an MD summary.
 
     Returns a list of dicts with keys: title, arxiv_id, md_path, success, has_content, content_length, error.
     """
@@ -49,10 +63,11 @@ async def summarize_arxiv_papers(
     # Filter to papers with an arXiv ID
     arxiv_papers = [p for p in papers if p.get("arxiv_id")]
     if not arxiv_papers:
-        LOG.info("No arXiv papers in the selected set; skipping hermes summarization.")
+        LOG.info("No arXiv papers in the selected set; skipping summarization.")
         return []
 
-    LOG.info("Summarizing %d arXiv papers via hermes → %s", len(arxiv_papers), output_dir)
+    program, _ = _get_summarizer()
+    LOG.info("Summarizing %d arXiv papers via %s → %s", len(arxiv_papers), program, output_dir)
 
     async def _run_one(paper: dict) -> dict:
         arxiv_id = paper["arxiv_id"]
@@ -77,10 +92,12 @@ async def summarize_arxiv_papers(
         arxiv_url = f"https://arxiv.org/abs/{arxiv_id}"
         prompt = f"使用arxiv2md-summarize skill 总结这篇论文: {arxiv_url}, 总结的md文件以论文title命名,保存在{output_dir} 中"
 
-        LOG.info("Summarizing: %s → %s", title, md_path)
+        program, base_args = _get_summarizer()
+        LOG.info("Summarizing: %s → %s via %s", title, md_path, program)
         try:
+            cmd = [program, *base_args, prompt]
             proc = await asyncio.create_subprocess_exec(
-                "hermes", "chat", "-q", prompt,
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -88,7 +105,7 @@ async def summarize_arxiv_papers(
             stdout, stderr = await proc.communicate()
             if proc.returncode != 0:
                 err = stderr.decode("utf-8", errors="replace")[:500]
-                LOG.error("hermes failed for %s (rc=%d): %s", title, proc.returncode, err)
+                LOG.error("%s failed for %s (rc=%d): %s", program, title, proc.returncode, err)
                 return {
                     "title": title,
                     "arxiv_id": arxiv_id,
@@ -99,12 +116,12 @@ async def summarize_arxiv_papers(
                     "error": err,
                 }
 
-            # After hermes returns, check whether the MD file was actually written and has content
+            # After the summarizer returns, check whether the MD file was actually written and has content
             has_content, content_length = _check_md_content(md_path)
             if has_content:
                 LOG.info("✓ Summarized: %s (%d chars)", md_path, content_length)
             else:
-                LOG.warning("hermes returned OK but %s is empty or missing", md_path)
+                LOG.warning("%s returned OK but %s is empty or missing", program, md_path)
             return {
                 "title": title,
                 "arxiv_id": arxiv_id,
@@ -114,7 +131,7 @@ async def summarize_arxiv_papers(
                 "content_length": content_length,
             }
         except Exception as exc:
-            LOG.error("hermes exception for %s: %s", title, exc)
+            LOG.error("%s exception for %s: %s", program, title, exc)
             return {
                 "title": title,
                 "arxiv_id": arxiv_id,
@@ -133,5 +150,5 @@ async def summarize_arxiv_papers(
 
     results = await asyncio.gather(*[_bounded(p) for p in arxiv_papers])
     succeeded = sum(1 for r in results if r["success"] and r.get("has_content"))
-    LOG.info("Hermes summarization done: %d/%d have content", succeeded, len(arxiv_papers))
+    LOG.info("Summarization done: %d/%d have content", succeeded, len(arxiv_papers))
     return results
