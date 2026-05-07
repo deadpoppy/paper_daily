@@ -294,8 +294,8 @@ async def _search_semantic_scholar(
                     if not token or not batch:
                         break
                 except Exception as e:
-                    LOG.warning("Semantic Scholar error: %s", e)
-                    break
+                    LOG.warning("Semantic Scholar error: %s, Retrying...", e)
+                    # break
 
     return papers[:max_results]
 
