@@ -59,10 +59,10 @@ E. 理论研究/算法设计/新范式：使用下方严格评分标准。
 
 
 def _content_hash(paper: dict[str, Any]) -> str:
-    """SHA256 of title + abstract for cache key."""
+    """SHA256 of title + abstract for cache key (versioned)."""
     title = paper.get("title", "")
     abstract = paper.get("abstract") or paper.get("tldr") or ""
-    raw = f"{title.strip()}::{abstract.strip()}"
+    raw = f"v{_CACHE_VERSION}::{title.strip()}::{abstract.strip()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -86,16 +86,26 @@ def _build_prompt(paper: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# Bump this whenever the scoring logic changes so old cache entries are ignored.
+_CACHE_VERSION = "2"
+
+
 def _extract_score(text: str) -> float:
-    """Extract score from <score>X.X</score> and normalize to [0,1]."""
+    """Extract score from <score>X.X</score> and normalize to [0,1].
+
+    The system prompt explicitly asks the model for a 0–10 scale, so we
+    **always** divide by 10.0.  This fixes the previous bug where a raw
+    value of ``1.0`` (meaning 1/10, a low score) was treated as a perfect
+    score because the code only divided when ``raw > 1.0``.
+    """
     match = re.search(r"<score>\s*([\d.]+)\s*</score>", text)
     if not match:
         match = re.search(r"(?:score|分数)[：:]\s*([\d.]+)", text, re.I)
     if match:
         raw = float(match.group(1))
-        if raw > 1.0:
-            raw = raw / 10.0
-        return max(0.0, min(1.0, round(raw, 4)))
+        # Prompt mandates 0-10 scale → always normalize.
+        normalized = raw / 10.0
+        return max(0.0, min(1.0, round(normalized, 4)))
     return 0.5
 
 
