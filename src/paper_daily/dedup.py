@@ -124,20 +124,12 @@ def dedup_merge(papers: list[dict]) -> list[dict]:
     return merged
 
 
-def filter_seen(papers: list[dict], seen_dois: set[str], seen_arxivs: set[str], seen_titles: set[str]) -> list[dict]:
+def filter_seen(papers: list[dict], seen_arxivs: set[str]) -> list[dict]:
+    """Filter out papers already recommended by arxiv_id."""
     filtered = []
     for p in papers:
-        title_raw = (p.get("title") or "").strip()
-        if not title_raw:
-            continue
-        doi = (p.get("doi") or "").strip().lower()
         arxiv = (p.get("arxiv_id") or "").strip().lower()
-        title = _norm_title(title_raw)
-        if doi and doi in seen_dois:
-            continue
         if arxiv and arxiv in seen_arxivs:
-            continue
-        if title and title in seen_titles:
             continue
         filtered.append(p)
     LOG.info("History filter: %d -> %d new papers", len(papers), len(filtered))

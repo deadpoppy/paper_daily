@@ -34,7 +34,6 @@ class Config:
     w_relevance: float = 0.20
     w_recency: float = 0.20
     w_impact: float = 0.20
-    w_novelty: float = 0.20
     w_academic_value: float = 0.20
     trim_ratio: float = 0.20  # trim bottom N%% before academic assessment
     debug: bool = False
@@ -77,7 +76,6 @@ def load_config(env_path: Path | None = None) -> Config:
         w_relevance=float(os.getenv("W_RELEVANCE", "0.20")),
         w_recency=float(os.getenv("W_RECENCY", "0.20")),
         w_impact=float(os.getenv("W_IMPACT", "0.20")),
-        w_novelty=float(os.getenv("W_NOVELTY", "0.20")),
         w_academic_value=float(os.getenv("W_ACADEMIC_VALUE", "0.20")),
         trim_ratio=float(os.getenv("PAPER_DAILY_TRIM_RATIO", "0.20")),
         debug=os.getenv("PAPER_DAILY_DEBUG", "false").lower() in ("1", "true", "yes"),
@@ -119,6 +117,9 @@ def _default_topics() -> list[Topic]:
         Topic("vla", "Vision-Language-Action Models", [
             "vision-language-action model",
             "VLA robot policy",
+            "VLN",
+            "vision language navigation",
+            "VLA",
             "language-conditioned robot policy",
             "generalist robot manipulation policy",
             "multimodal robot action prediction",

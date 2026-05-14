@@ -57,6 +57,42 @@ E. 理论研究/算法设计/新范式：使用下方严格评分标准。
     "<reason>简短的中文理由，2–3句话说明为什么给这个分</reason>"
 )
 
+_SYSTEM_PROMPT_ALT = (
+'''
+你是一位资深 AI 实验室负责人，长期关注具身智能、大模型与 AI 算法的前沿演进。
+你的任务是从「长期研究影响力」和「方法论优雅性」两个维度，极其严格地评估论文学术价值，给出 0–10 的分数。
+
+【总体原则】
+- 你每年审阅数百篇论文，90% 的工作不会超过 6 分。
+- 真正的分水岭在于：这篇论文是否会在 3 年后仍被引用和讨论？
+- 方法上的微小改进或领域内的简单应用，应果断给低分。
+
+【论文类型判定（先强制分类）】
+在打分前，你必须先判断论文属于以下哪一类，并严格遵循对应的分数上限：
+A. 综述性论文：上限 3 分，除非提出了全新的分析框架且极具指导意义，否则 ≤1 分。
+B. 纯应用/工程/系统报告：上限 3 分，若无方法创新则 ≤1 分。
+C. 数据集/基准/评测类：上限 2 分，若仅是简单收集或套用已有流程则 0 分。
+D. 小众应用方向（无通用方法贡献，只是把已有技术用在某个窄域）：上限 2 分，若只是换场景调参则 0 分。
+E. 理论研究/算法设计/新范式：使用下方严格评分标准。
+
+【评分标准（仅适用于 E 类论文）】
+- 10 分：里程碑。提出全新问题或范式，理论/算法有重大突破，将定义未来数年的研究方向。
+- 8–9 分：重大创新。核心创意非常新颖，理论扎实，方法精巧，明显优于所有现有方法，拓展性强。
+- 6–7 分：明显贡献。有明确的创新点，方法有理论或实验上的深入剖析，但尚未达到改变领域格局的程度。
+- 4–5 分：边际改进。思路平庸，主要是对现有方法的简单改进或模块替换，实验没有令人信服的差距。
+- 2–3 分：水文。缺乏实质性创新，A+B 拼接，实验不充分，或者仅在某些窄设定下有效。
+- 0–1 分：完全不具备学术价值。严重错误、纯灌水、欺诈，或摘要空洞无物、纯宣传风格。
+
+【关键惩罚规则（必须直接给 0 分，不适用其他分数）】
+- 标题党、摘要使用“革命性”“超越人类”“首次”“通用人工智能”等夸大词汇但无实质内容 → 0 分。
+- 只把 A、B、C 几个已有模块拼接，没有统一 insight 或设计原理说明 → 0 分。
+- 摘要里没有一句话能说清楚“我们到底做了什么和别人不一样” → 2 分及以下。
+- 仅汇报“我们在 XX 场景做了实验，效果不错”而无任何分析或启发 → 1 分。
+'''+ "输出格式（必须严格遵守，不要输出任何多余内容）：\n"
+    "<score>X.X</score>\n"
+    "<reason>简短的中文理由，2–3句话说明为什么给这个分</reason>"
+)
+
 
 def _content_hash(paper: dict[str, Any]) -> str:
     """SHA256 of title + abstract for cache key (versioned)."""
@@ -87,7 +123,7 @@ def _build_prompt(paper: dict[str, Any]) -> str:
 
 
 # Bump this whenever the scoring logic changes so old cache entries are ignored.
-_CACHE_VERSION = "2"
+_CACHE_VERSION = "3"
 
 
 def _extract_score(text: str) -> float:
@@ -120,24 +156,17 @@ def _extract_reason(text: str) -> str:
     return ""
 
 
-async def _assess_one(
+async def _fetch_assessment_text(
     client: httpx.AsyncClient,
-    paper: dict[str, Any],
+    payload: dict[str, Any],
     api_url: str,
     api_key: str,
     backup_api_key: str | None,
-    model: str,
     semaphore: asyncio.Semaphore,
     debug: bool = False,
-) -> dict[str, Any]:
-    prompt = _build_prompt(paper)
-    payload = {
-        "model": model,
-        "max_tokens": 4096,
-        "messages": [{"role": "user", "content": prompt}],
-        "system": _SYSTEM_PROMPT,
-    }
-
+    paper_title: str = "",
+) -> str:
+    """Make a single assessment API call with infinite retry & key rotation."""
     keys = [k for k in (api_key, backup_api_key) if k]
     key_idx = 0
     attempts_per_key = 0
@@ -152,7 +181,7 @@ async def _assess_one(
         }
         if debug:
             print(f"\n[DEBUG] ====== Academic assessment request ======")
-            print(f"Title: {paper.get('title', 'N/A')}")
+            print(f"Title: {paper_title}")
             print(f"Payload:\n{payload}")
             print("[DEBUG] ==========================================\n")
         async with semaphore:
@@ -179,7 +208,7 @@ async def _assess_one(
 
                 if debug:
                     print(f"\n[DEBUG] ====== Academic assessment response ======")
-                    print(f"Title: {paper.get('title', 'N/A')}")
+                    print(f"Title: {paper_title}")
                     print(f"Raw text:\n{text}")
                     print(f"Extracted score: {text and _extract_score(text) or 'N/A'}")
                     print(f"Extracted reason: {text and _extract_reason(text) or 'N/A'}")
@@ -188,20 +217,13 @@ async def _assess_one(
                 if "<score>" not in text:
                     raise ValueError(f"Missing <score> tag in response: {text[:200]}")
 
-                score = _extract_score(text)
-                reason = _extract_reason(text)
-
-                copy = dict(paper)
-                copy["academic_score"] = score
-                copy["academic_reason"] = reason
-                LOG.debug("'%s' -> academic_score=%.2f", paper.get("title", "")[:40], score)
-                return copy
+                return text
             except Exception as e:
                 wait = min(2 ** total_attempt, 30)  # cap at 30s
                 LOG.warning(
                     "Academic assessment attempt %d failed for '%s' (key %d): %s. Retrying in %ds...",
                     total_attempt + 1,
-                    paper.get("title", "")[:40],
+                    paper_title[:40],
                     key_idx + 1,
                     type(e).__name__,
                     wait,
@@ -216,8 +238,66 @@ async def _assess_one(
                     LOG.info(
                         "Switching to API key %d for '%s' after 3 failures",
                         key_idx + 1,
-                        paper.get("title", "")[:40],
+                        paper_title[:40],
                     )
+
+
+async def _assess_one(
+    client: httpx.AsyncClient,
+    paper: dict[str, Any],
+    api_url: str,
+    api_key: str,
+    backup_api_key: str | None,
+    model: str,
+    semaphore: asyncio.Semaphore,
+    debug: bool = False,
+) -> dict[str, Any]:
+    prompt = _build_prompt(paper)
+
+    # --- First call (original prompt) ---
+    payload1 = {
+        "model": model,
+        "max_tokens": 4096,
+        "messages": [{"role": "user", "content": prompt}],
+        "system": _SYSTEM_PROMPT,
+    }
+    text1 = await _fetch_assessment_text(
+        client, payload1, api_url, api_key, backup_api_key,
+        semaphore, debug, paper.get("title", "N/A"),
+    )
+    score1 = _extract_score(text1)
+    reason1 = _extract_reason(text1)
+
+    # --- Second call (alternate prompt) ---
+    payload2 = {
+        "model": model,
+        "max_tokens": 4096,
+        "messages": [{"role": "user", "content": prompt}],
+        "system": _SYSTEM_PROMPT_ALT,
+    }
+    text2 = await _fetch_assessment_text(
+        client, payload2, api_url, api_key, backup_api_key,
+        semaphore, debug, paper.get("title", "N/A"),
+    )
+    score2 = _extract_score(text2)
+
+    # Average the two scores
+    score = (score1 + score2) / 2.0
+
+    if debug:
+        print(
+            f"\n[DEBUG] Averaged academic score for '{paper.get('title', 'N/A')[:60]}': "
+            f"score1={score1:.2f}, score2={score2:.2f}, avg={score:.2f}\n"
+        )
+
+    copy = dict(paper)
+    copy["academic_score"] = score
+    copy["academic_reason"] = reason1
+    LOG.debug(
+        "'%s' -> academic_score=%.2f (%.2f + %.2f)/2",
+        paper.get("title", "")[:40], score, score1, score2,
+    )
+    return copy
 
 
 async def assess_papers(

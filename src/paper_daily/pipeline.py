@@ -23,9 +23,7 @@ async def run_pipeline(cfg: Config) -> list[dict]:
     db_path = cfg.data_dir / "paper_daily.db"
     db = PaperDatabase(db_path)
 
-    seen_dois = db.get_seen_dois()
     seen_arxivs = db.get_seen_arxiv_ids()
-    seen_titles = db.get_seen_titles()
 
     # ------------------------------------------------------------------
     # 1. Search across topics
@@ -98,7 +96,7 @@ async def run_pipeline(cfg: Config) -> list[dict]:
     # ------------------------------------------------------------------
     # 3. Filter already recommended
     # ------------------------------------------------------------------
-    new_papers = filter_seen(merged, seen_dois, seen_arxivs, seen_titles)
+    new_papers = filter_seen(merged, seen_arxivs)
     if cfg.debug:
         print(f"\n[DEBUG] ====== Pipeline stage: filter_seen ======")
         print(f"Before history filter: {len(merged)} papers")
@@ -117,12 +115,9 @@ async def run_pipeline(cfg: Config) -> list[dict]:
     pre_ranked = rank_papers(
         new_papers,
         topic_keywords=topic_keywords,
-        seen_dois=seen_dois,
-        seen_arxivs=seen_arxivs,
         w_relevance=cfg.w_relevance,
         w_recency=cfg.w_recency,
         w_impact=cfg.w_impact,
-        w_novelty=cfg.w_novelty,
         w_academic_value=0.0,  # academic value not yet assessed
     )
 
@@ -157,7 +152,7 @@ async def run_pipeline(cfg: Config) -> list[dict]:
             print(
                 f"  {i}. {p.get('title', 'N/A')[:70]} | "
                 f"total={s.get('total')} relevance={s.get('relevance')} "
-                f"recency={s.get('recency')} impact={s.get('impact')} novelty={s.get('novelty')}"
+                f"recency={s.get('recency')} impact={s.get('impact')}"
             )
         print("[DEBUG] =============================================\n")
 
@@ -191,12 +186,9 @@ async def run_pipeline(cfg: Config) -> list[dict]:
     final_ranked = rank_papers(
         candidates,
         topic_keywords=topic_keywords,
-        seen_dois=seen_dois,
-        seen_arxivs=seen_arxivs,
         w_relevance=cfg.w_relevance,
         w_recency=cfg.w_recency,
         w_impact=cfg.w_impact,
-        w_novelty=cfg.w_novelty,
         w_academic_value=cfg.w_academic_value,
     )
 
@@ -214,7 +206,7 @@ async def run_pipeline(cfg: Config) -> list[dict]:
                 f"  {i}. {p.get('title', 'N/A')[:70]} | "
                 f"total={s.get('total')} relevance={s.get('relevance')} "
                 f"recency={s.get('recency')} impact={s.get('impact')} "
-                f"novelty={s.get('novelty')} academic_value={s.get('academic_value')}"
+                f"academic_value={s.get('academic_value')}"
             )
         print("[DEBUG] =====================================\n")
 

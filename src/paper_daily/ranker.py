@@ -1,6 +1,7 @@
 """Paper scoring and ranking engine.
 
-Score = w_relevance * relevance + w_recency * recency + w_impact * impact + w_novelty * novelty
+Score = w_relevance * relevance + w_recency * recency + w_impact * impact
+        + w_academic_value * academic_value
 """
 from __future__ import annotations
 
@@ -78,26 +79,12 @@ def score_impact(paper: dict) -> float:
     ceiling = math.log(cap + 1)
     return min(raw / ceiling, 1.0)
 
-
-def score_novelty(paper: dict, seen_dois: set[str], seen_arxivs: set[str]) -> float:
-    doi = (paper.get("doi") or "").strip().lower()
-    arxiv = (paper.get("arxiv_id") or "").strip().lower()
-    if doi and doi in seen_dois:
-        return 0.0
-    if arxiv and arxiv in seen_arxivs:
-        return 0.0
-    return 1.0
-
-
 def rank_papers(
     papers: list[dict],
     topic_keywords: list[list[str]],
-    seen_dois: set[str],
-    seen_arxivs: set[str],
     w_relevance: float = 0.40,
     w_recency: float = 0.15,
     w_impact: float = 0.10,
-    w_novelty: float = 0.10,
     w_academic_value: float = 0.25,
 ) -> list[dict]:
     now = datetime.now(timezone.utc)
@@ -122,7 +109,6 @@ def rank_papers(
         else:
             rel = score_relevance_lexical(p, topic_keywords)
         rec = score_recency(p, now)
-        nov = score_novelty(p, seen_dois, seen_arxivs)
         aca = p.get("academic_score", 0.5)  # 0-1, 0.5 = neutral if not yet assessed
 
         # Impact: relative citation with steep decay (square)
@@ -134,7 +120,6 @@ def rank_papers(
             w_relevance * rel
             + w_recency * rec
             + w_impact * imp
-            + w_novelty * nov
             + w_academic_value * aca
         )
         copy = dict(p)
@@ -142,7 +127,6 @@ def rank_papers(
             "relevance": round(rel, 4),
             "recency": round(rec, 4),
             "impact": round(imp, 4),
-            "novelty": round(nov, 4),
             "academic_value": round(aca, 4),
             "total": round(total, 4),
             "scoring_mode": scoring_mode,
