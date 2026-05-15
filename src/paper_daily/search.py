@@ -139,8 +139,15 @@ async def _search_arxiv(keywords: list[str], max_results: int = 50, days_back: i
         client = arxiv.Client(
             page_size=min(max_results, 1000),
             delay_seconds=10,
-            num_retries=30,
+            num_retries=5,
         )
+        # Monkey-patch: arxiv 3.0.0 doesn't set timeout; default is infinite.
+        _orig_get = client._session.get
+        def _get_with_timeout(url, **kwargs):
+            kwargs.setdefault("timeout", 30)
+            return _orig_get(url, **kwargs)
+        client._session.get = _get_with_timeout
+
         search = arxiv.Search(
             query=q,
             max_results=max_results,
