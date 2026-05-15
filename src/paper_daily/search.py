@@ -80,9 +80,16 @@ def _build_ss_query(keywords: list[str]) -> str:
     """Build a Semantic Scholar query using OR semantics.
 
     SS bulk search treats space-separated terms as AND. Use '|' for OR.
-    Example: "large language model | LLM | transformer"
+    Phrases with spaces must be quoted to stay as phrases.
+    Example: '"large language model" | LLM | transformer'
     """
-    return " | ".join(keywords)
+    parts = []
+    for kw in keywords:
+        if " " in kw:
+            parts.append(f'"{kw}"')
+        else:
+            parts.append(kw)
+    return " | ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +147,29 @@ async def _search_arxiv(keywords: list[str], max_results: int = 50, days_back: i
             sort_by=arxiv.SortCriterion.SubmittedDate,
             sort_order=arxiv.SortOrder.Descending,
         )
-        return [_normalise_arxiv_result(r) for r in client.results(search)]
+        # ── Diagnostic: hit first page directly to log totalResults ──
+        try:
+            first_url = client._format_url(search, 0, client.page_size)
+            LOG.info("arXiv first-page URL: %s", first_url)
+            import feedparser
+            import requests
+            resp = requests.get(first_url, headers={"user-agent": "paper-daily/0.1"}, timeout=30)
+            feed = feedparser.parse(resp.content)
+            total_reported = getattr(getattr(feed, "feed", None), "opensearch_totalresults", "?")
+            LOG.info(
+                "arXiv API totalResults=%s | first-page entries=%d | page_size=%d | requested_max=%d",
+                total_reported,
+                len(feed.entries),
+                client.page_size,
+                max_results,
+            )
+        except Exception as diag_err:
+            LOG.warning("arXiv first-page diagnostic failed: %s", diag_err)
+        # ── End diagnostic ──
+
+        papers = [_normalise_arxiv_result(r) for r in client.results(search)]
+        LOG.info("arXiv fetched %d papers (requested max=%d)", len(papers), max_results)
+        return papers
 
     async with _ARXIV_LOCK:
         try:
