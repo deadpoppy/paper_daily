@@ -69,7 +69,7 @@ def score_recency(paper: dict, now: datetime | None = None) -> float:
         return 0.9
     if days_old <= 180:
         return 0.8
-    return 0.8 * math.exp(-0.005 * (days_old - 180))
+    return 0.8 #* math.exp(-0.005 * (days_old - 180))
 
 
 def score_impact(paper: dict) -> float:
@@ -114,7 +114,7 @@ def rank_papers(
         # Impact: relative citation with steep decay (square)
         citations = p.get("citation_count", 0) or 0
         relative = citations / max_citations
-        imp = relative ** 1.5  # steep decay: 0.5 -> 0.25, 0.25 -> 0.0625
+        imp = relative ** 1.2  # steep decay: 0.5 -> 0.25, 0.25 -> 0.0625
 
         total = (
             w_relevance * rel
