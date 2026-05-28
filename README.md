@@ -36,7 +36,7 @@ cp .env.example .env
 ```
 
 ```env
-# ---------------------------------------------------------------------------
+paper-daily# ---------------------------------------------------------------------------
 # Unified LLM API (Anthropic-compatible)
 #   Used for BOTH academic-value assessment AND Chinese recommendation reasons.
 # ---------------------------------------------------------------------------
@@ -87,9 +87,6 @@ paper-daily run --env /path/to/.env
 
 # 详细日志
 paper-daily run -v
-
-# Debug 模式：打印搜索到的论文、评估请求/返回、筛选详情
-paper-daily run --debug
 
 # 查看历史推荐
 paper-daily history
@@ -145,18 +142,6 @@ paper-daily run
 4. **新颖度**：从未推荐过=1.0，已推荐过=0.0。
 5. **学术价值**：LLM 审稿人 0–10 分归一化到 [0,1]。
 
-## 🧠 LLM Prompt 配置
-
-项目中共有 **3 处**直接调用 LLM，Prompt 均内嵌在源码中，修改对应文件即可调整：
-
-| 用途 | 文件 | Prompt 类型 | 关键变量/函数 |
-|------|------|-------------|---------------|
-| **学术价值评估** | `src/paper_daily/academic_value.py` | System + User | `_SYSTEM_PROMPT`（评分标准 0–10）<br>`_build_prompt()`（单篇论文输入） |
-| **中文推荐理由** | `src/paper_daily/reviewer.py` | User | `_build_prompt()`（2–3 句推荐理由） |
-| **论文深度总结** | `src/paper_daily/summarize.py` | User | `_run_one()` 中的 `prompt`（调用 hermes CLI 的 arxiv2md-summarize skill） |
-
-> 学术评估和推荐理由共用同一组 API 配置（`ACADEMIC_VALUE_URL` / `API_KEY` / `MODEL`）。
-
 ### 学术评估候选池
 
 1. 对所有新论文做 4D 预排序（不含学术价值）
@@ -186,22 +171,23 @@ DELETE FROM academic_cache WHERE content_hash = '...';
 
 默认覆盖 **14 个 AI 子领域**，每个主题取前 3 个关键词在 5 个源中搜索（每源最多 50 条，按时间降序）：
 
-| Key | 子领域 | 关键词示例 |
-|-----|--------|-----------|
-| `llm` | 大语言模型 | large language model, LLM, transformer, reasoning |
-| `vision` | 计算机视觉 | computer vision, diffusion model, image generation, segmentation |
-| `rl` | 强化学习 | reinforcement learning, RLHF, PPO, Q-learning |
-| `multimodal` | 多模态学习 | multimodal, vision-language model, cross-modal |
-| `agent` | AI 智能体 | AI agent, autonomous agent, tool use, planning |
-| `efficiency` | 效率与系统 | model efficiency, quantization, pruning, distillation |
-| `genai` | 生成式 AI | generative AI, text-to-image, text-to-video, flow model |
-| `embodied` | 具身智能 | embodied AI, robot learning, manipulation, humanoid robot |
-| `autonomous_driving` | 自动驾驶 | autonomous driving, self-driving, end-to-end driving |
-| `foundation_model` | 基础模型 | foundation model, pre-training, scaling law, emergent ability |
-| `world_model` | 世界模型 | world model, environment model, predictive model |
-| `slam` | SLAM | SLAM, simultaneous localization and mapping, visual odometry |
-| `end_to_end` | 端到端学习 | end-to-end learning, end-to-end system, end-to-end training |
-| `dl_theory` | 深度学习理论 | neural network theory, optimization landscape, representation learning |
+
+| Key                  | 子领域       | 关键词示例                                                             |
+| -------------------- | ------------ | ---------------------------------------------------------------------- |
+| `llm`                | 大语言模型   | large language model, LLM, transformer, reasoning                      |
+| `vision`             | 计算机视觉   | computer vision, diffusion model, image generation, segmentation       |
+| `rl`                 | 强化学习     | reinforcement learning, RLHF, PPO, Q-learning                          |
+| `multimodal`         | 多模态学习   | multimodal, vision-language model, cross-modal                         |
+| `agent`              | AI 智能体    | AI agent, autonomous agent, tool use, planning                         |
+| `efficiency`         | 效率与系统   | model efficiency, quantization, pruning, distillation                  |
+| `genai`              | 生成式 AI    | generative AI, text-to-image, text-to-video, flow model                |
+| `embodied`           | 具身智能     | embodied AI, robot learning, manipulation, humanoid robot              |
+| `autonomous_driving` | 自动驾驶     | autonomous driving, self-driving, end-to-end driving                   |
+| `foundation_model`   | 基础模型     | foundation model, pre-training, scaling law, emergent ability          |
+| `world_model`        | 世界模型     | world model, environment model, predictive model                       |
+| `slam`               | SLAM         | SLAM, simultaneous localization and mapping, visual odometry           |
+| `end_to_end`         | 端到端学习   | end-to-end learning, end-to-end system, end-to-end training            |
+| `dl_theory`          | 深度学习理论 | neural network theory, optimization landscape, representation learning |
 
 修改 `src/paper_daily/config.py` 中的 `_default_topics()` 即可自定义。
 
@@ -211,45 +197,48 @@ DELETE FROM academic_cache WHERE content_hash = '...';
 
 ### `papers` — 论文库（去重后的所有论文）
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | INTEGER PK | 自增主键 |
-| `doi` | TEXT UNIQUE | DOI |
-| `arxiv_id` | TEXT UNIQUE | arXiv ID |
-| `title` | TEXT NOT NULL | 标题 |
-| `authors` | TEXT | 作者列表（JSON 字符串） |
-| `abstract` | TEXT | 摘要 |
-| `year` | INTEGER | 发表年份 |
-| `published_date` | TEXT | 发表日期（YYYY-MM-DD） |
-| `venue` | TEXT | 期刊/会议 |
-| `citation_count` | INTEGER | 引用数 |
-| `url` | TEXT | 论文链接 |
-| `sources` | TEXT | 搜索来源（逗号分隔） |
-| `created_at` | TEXT | 入库时间 |
+
+| 字段             | 类型          | 说明                    |
+| ---------------- | ------------- | ----------------------- |
+| `id`             | INTEGER PK    | 自增主键                |
+| `doi`            | TEXT UNIQUE   | DOI                     |
+| `arxiv_id`       | TEXT UNIQUE   | arXiv ID                |
+| `title`          | TEXT NOT NULL | 标题                    |
+| `authors`        | TEXT          | 作者列表（JSON 字符串） |
+| `abstract`       | TEXT          | 摘要                    |
+| `year`           | INTEGER       | 发表年份                |
+| `published_date` | TEXT          | 发表日期（YYYY-MM-DD）  |
+| `venue`          | TEXT          | 期刊/会议               |
+| `citation_count` | INTEGER       | 引用数                  |
+| `url`            | TEXT          | 论文链接                |
+| `sources`        | TEXT          | 搜索来源（逗号分隔）    |
+| `created_at`     | TEXT          | 入库时间                |
 
 ### `recommendations` — 推荐历史
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | INTEGER PK | 自增主键 |
-| `paper_id` | INTEGER FK | 关联 `papers.id` |
-| `recommend_date` | TEXT | 推荐日期（YYYY-MM-DD） |
-| `rank` | INTEGER | 当天排名 |
-| `score` | REAL | 五维综合总分 |
-| `reason_zh` | TEXT | 中文推荐理由 |
-| `academic_score` | REAL | 学术价值分数（0–1） |
-| `created_at` | TEXT | 记录时间 |
+
+| 字段             | 类型       | 说明                   |
+| ---------------- | ---------- | ---------------------- |
+| `id`             | INTEGER PK | 自增主键               |
+| `paper_id`       | INTEGER FK | 关联`papers.id`        |
+| `recommend_date` | TEXT       | 推荐日期（YYYY-MM-DD） |
+| `rank`           | INTEGER    | 当天排名               |
+| `score`          | REAL       | 五维综合总分           |
+| `reason_zh`      | TEXT       | 中文推荐理由           |
+| `academic_score` | REAL       | 学术价值分数（0–1）   |
+| `created_at`     | TEXT       | 记录时间               |
 
 ### `academic_cache` — 学术评估缓存
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | INTEGER PK | 自增主键 |
-| `content_hash` | TEXT UNIQUE | SHA256(title + abstract) |
-| `title` | TEXT | 论文标题（方便人工查看） |
-| `academic_score` | REAL NOT NULL | 学术分数（0–1） |
-| `academic_reason` | TEXT | 中文评估理由 |
-| `created_at` | TEXT | 缓存时间 |
+
+| 字段              | 类型          | 说明                     |
+| ----------------- | ------------- | ------------------------ |
+| `id`              | INTEGER PK    | 自增主键                 |
+| `content_hash`    | TEXT UNIQUE   | SHA256(title + abstract) |
+| `title`           | TEXT          | 论文标题（方便人工查看） |
+| `academic_score`  | REAL NOT NULL | 学术分数（0–1）         |
+| `academic_reason` | TEXT          | 中文评估理由             |
+| `created_at`      | TEXT          | 缓存时间                 |
 
 ### 常用查询示例
 
@@ -297,23 +286,22 @@ GROUP BY p.sources;
 
 ### 环境变量完整列表
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `PAPER_DAILY_DATA_DIR` | `./data` | 数据目录 |
-| `PAPER_DAILY_TOP_N` | `10` | 每天推荐数量 |
-| `PAPER_DAILY_MAX_RESULTS` | `50` | 每源每主题最大搜索条数 |
-| `PAPER_DAILY_DAYS_BACK` | `180` | 回溯天数 |
-| `PAPER_DAILY_TRIM_RATIO` | `0.20` | 学术评估前剪掉排名最低的比例（0=不剪, 0.2=剪20%%） |
-| `PAPER_DAILY_DEBUG` | `false` | Debug 模式：打印搜索到的论文、LLM 评估请求/返回、各阶段筛选详情 |
-| `ACADEMIC_VALUE_URL` | — | 统一 LLM API base URL（Anthropic-compatible） |
-| `ACADEMIC_VALUE_API_KEY` | — | 统一 LLM API key |
-| `ACADEMIC_VALUE_MODEL` | `MiniMax-M2.7` | 统一 LLM 模型名 |
-| `OPENALEX_EMAIL` | — | OpenAlex 邮箱（提高 rate limit） |
-| `W_RELEVANCE` | `0.20` | 相关性权重 |
-| `W_RECENCY` | `0.20` | 时效性权重 |
-| `W_IMPACT` | `0.20` | 影响力权重 |
-| `W_NOVELTY` | `0.20` | 新颖度权重 |
-| `W_ACADEMIC_VALUE` | `0.20` | 学术价值权重 |
+
+| 变量                      | 默认值         | 说明                                          |
+| ------------------------- | -------------- | --------------------------------------------- |
+| `PAPER_DAILY_DATA_DIR`    | `./data`       | 数据目录                                      |
+| `PAPER_DAILY_TOP_N`       | `10`           | 每天推荐数量                                  |
+| `PAPER_DAILY_MAX_RESULTS` | `50`           | 每源每主题最大搜索条数                        |
+| `PAPER_DAILY_DAYS_BACK`   | `180`          | 回溯天数                                      |
+| `ACADEMIC_VALUE_URL`      | —             | 统一 LLM API base URL（Anthropic-compatible） |
+| `ACADEMIC_VALUE_API_KEY`  | —             | 统一 LLM API key                              |
+| `ACADEMIC_VALUE_MODEL`    | `MiniMax-M2.7` | 统一 LLM 模型名                               |
+| `OPENALEX_EMAIL`          | —             | OpenAlex 邮箱（提高 rate limit）              |
+| `W_RELEVANCE`             | `0.20`         | 相关性权重                                    |
+| `W_RECENCY`               | `0.20`         | 时效性权重                                    |
+| `W_IMPACT`                | `0.20`         | 影响力权重                                    |
+| `W_NOVELTY`               | `0.20`         | 新颖度权重                                    |
+| `W_ACADEMIC_VALUE`        | `0.20`         | 学术价值权重                                  |
 
 ## ⚠️ 注意事项
 

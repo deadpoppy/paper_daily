@@ -30,6 +30,7 @@ class Config:
     academic_value_backup_api_key: str | None = None
     academic_value_model: str = "MiniMax-M2.7"
     academic_value_concurrency: int = 20
+    academic_value_threshold: float = 0.4  # filter out papers with normalized score < threshold
     # Ranking weights (5-dimension, uniform)
     w_relevance: float = 0.20
     w_recency: float = 0.20
@@ -73,6 +74,7 @@ def load_config(env_path: Path | None = None) -> Config:
         academic_value_backup_api_key=os.getenv("ACADEMIC_VALUE_BACKUP_API_KEY") or None,
         academic_value_model=os.getenv("ACADEMIC_VALUE_MODEL", "MiniMax-M2.7"),
         academic_value_concurrency=int(os.getenv("ACADEMIC_VALUE_CONCURRENCY", "20")),
+        academic_value_threshold=float(os.getenv("ACADEMIC_VALUE_THRESHOLD", "0.4")),
         w_relevance=float(os.getenv("W_RELEVANCE", "0.20")),
         w_recency=float(os.getenv("W_RECENCY", "0.20")),
         w_impact=float(os.getenv("W_IMPACT", "0.20")),

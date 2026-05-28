@@ -192,18 +192,20 @@ async def run_pipeline(cfg: Config) -> list[dict]:
         w_academic_value=cfg.w_academic_value,
     )
 
-    # Filter out papers with academic value < 4.0 (normalized score < 0.4)
+    # Filter out papers with academic value below threshold
+    threshold = cfg.academic_value_threshold
     before_filter = len(final_ranked)
-    final_ranked = [p for p in final_ranked if p.get("academic_score", 0.5) >= 0.4]
+    final_ranked = [p for p in final_ranked if p.get("academic_score", 0.5) >= threshold]
     filtered_count = before_filter - len(final_ranked)
     if filtered_count:
         LOG.info(
-            "Filtered out %d papers with academic value < 4.0 (%d remain)",
+            "Filtered out %d papers with academic value < %.2f (%d remain)",
             filtered_count,
+            threshold,
             len(final_ranked),
         )
     if not final_ranked:
-        LOG.warning("No papers remain after academic value filtering (< 4.0).")
+        LOG.warning("No papers remain after academic value filtering (< %.2f).", threshold)
         return []
 
     top_papers = final_ranked[: cfg.top_n]
