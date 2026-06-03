@@ -137,17 +137,61 @@ class PaperDatabase:
 
     def insert_paper(self, paper: dict[str, Any]) -> int:
         with self._connect() as conn:
+            # 1) 先按 doi 或 arxiv_id 查找已有记录
+            existing_id = None
+            if paper.get("doi"):
+                row = conn.execute(
+                    "SELECT id FROM papers WHERE doi = ?", (paper["doi"],)
+                ).fetchone()
+                if row:
+                    existing_id = row["id"]
+            if existing_id is None and paper.get("arxiv_id"):
+                row = conn.execute(
+                    "SELECT id FROM papers WHERE arxiv_id = ?", (paper["arxiv_id"],)
+                ).fetchone()
+                if row:
+                    existing_id = row["id"]
+
+            if existing_id is not None:
+                # 2) 更新已有记录（保留更优/更全的字段）
+                conn.execute(
+                    """
+                    UPDATE papers SET
+                        arxiv_id   = COALESCE(?, arxiv_id),
+                        title      = ?,
+                        authors    = ?,
+                        abstract   = ?,
+                        year       = ?,
+                        published_date = ?,
+                        venue      = COALESCE(?, venue),
+                        citation_count = MAX(?, citation_count),
+                        url        = COALESCE(?, url),
+                        sources    = MAX(sources, ?)
+                    WHERE id = ?
+                    """,
+                    (
+                        paper.get("arxiv_id") or None,
+                        paper.get("title", ""),
+                        json.dumps(paper.get("authors", []), ensure_ascii=False),
+                        paper.get("abstract", ""),
+                        paper.get("year"),
+                        paper.get("published_date"),
+                        paper.get("venue", ""),
+                        paper.get("citation_count", 0) or 0,
+                        paper.get("url", ""),
+                        paper.get("source", ""),
+                        existing_id,
+                    ),
+                )
+                conn.commit()
+                return existing_id
+
+            # 3) 不存在则插入新记录
             cur = conn.execute(
                 """
                 INSERT INTO papers (doi, arxiv_id, title, authors, abstract, year,
                                     published_date, venue, citation_count, url, sources)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(doi) DO UPDATE SET
-                    arxiv_id=COALESCE(excluded.arxiv_id, arxiv_id),
-                    citation_count=MAX(excluded.citation_count, citation_count),
-                    sources=MAX(sources, excluded.sources),
-                    url=COALESCE(excluded.url, url),
-                    venue=COALESCE(excluded.venue, venue)
                 RETURNING id
                 """,
                 (
