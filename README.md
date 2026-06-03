@@ -1,3 +1,17 @@
+<p align="center">
+  <img src="figures/banner.svg" alt="Paper Daily — Daily AI Paper Discovery & Ranking" width="100%">
+</p>
+
+<p align="center">
+  <a href="https://github.com/deadpoppy/paper_daily/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/python-≥3.10-3776AB.svg?logo=python&logoColor=white" alt="Python ≥3.10">
+  <a href="README-en.md"><img src="https://img.shields.io/badge/English-README-blue" alt="English README"></a>
+</p>
+
+<p align="center">
+  <b>中文</b> | <a href="README-en.md">English</a>
+</p>
+
 # 📚 Paper Daily
 
 每日 AI 论文推荐工具。自动从多个学术源并行搜索最新论文，去重、五维排序、LLM 学术质量审核、生成中文推荐理由，并持久化到本地 SQLite 数据库。
@@ -313,4 +327,4 @@ GROUP BY p.sources;
 
 ## 📄 License
 
-MIT
+[MIT](LICENSE)
