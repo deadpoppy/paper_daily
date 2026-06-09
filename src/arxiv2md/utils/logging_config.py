@@ -176,6 +176,10 @@ def configure_logging() -> None:
         logging.getLogger(name).handlers = []
         logging.getLogger(name).propagate = True
 
+    http_level = logging.INFO if log_level.upper() in {"TRACE", "DEBUG"} else logging.WARNING
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(http_level)
+
 
 def get_logger(name: str | None = None) -> logger.__class__:
     """Get a configured logger instance.

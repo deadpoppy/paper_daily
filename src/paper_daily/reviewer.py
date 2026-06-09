@@ -93,10 +93,11 @@ async def _call_anthropic_compatible(
             except Exception as e:
                 wait = min(2 ** attempt, 30)
                 LOG.warning(
-                    "LLM reason generation attempt %d failed with key %d: %s. Retrying in %ds...",
+                    "LLM reason generation attempt %d failed with key %d: %s: %s. Retrying in %ds...",
                     attempt + 1,
                     key_idx + 1,
                     type(e).__name__,
+                    e,
                     wait,
                 )
                 await asyncio.sleep(wait)

@@ -19,10 +19,13 @@ def _setup_logging(verbose: bool = False):
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         stream=sys.stderr,
     )
+    http_level = logging.INFO if verbose else logging.WARNING
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(http_level)
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    _setup_logging(args.verbose)
+    _setup_logging(args.verbose or args.debug)
     env_path = Path(args.env) if args.env else None
     cfg = load_config(env_path)
 

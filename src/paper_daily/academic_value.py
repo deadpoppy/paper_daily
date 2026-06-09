@@ -221,11 +221,12 @@ async def _fetch_assessment_text(
             except Exception as e:
                 wait = min(2 ** total_attempt, 30)  # cap at 30s
                 LOG.warning(
-                    "Academic assessment attempt %d failed for '%s' (key %d): %s. Retrying in %ds...",
+                    "Academic assessment attempt %d failed for '%s' (key %d): %s: %s. Retrying in %ds...",
                     total_attempt + 1,
                     paper_title[:40],
                     key_idx + 1,
                     type(e).__name__,
+                    e,
                     wait,
                 )
                 await asyncio.sleep(wait)
