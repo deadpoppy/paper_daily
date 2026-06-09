@@ -33,12 +33,14 @@
 ```bash
 cd paper-daily
 pip install -e .
+cp -r skills/* ~/.claude/skills/
 ```
 
 或用 uv：
 
 ```bash
 uv pip install -e .
+cp -r skills/* ~/.claude/skills/
 ```
 
 ### 配置（可选但强烈推荐）

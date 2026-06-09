@@ -12,6 +12,8 @@ import httpx
 
 LOG = logging.getLogger("paper_daily.search")
 
+_SIMPLE_QUERY_TOKEN_RE = re.compile(r"^[A-Za-z0-9_]+$")
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -54,19 +56,31 @@ def _sane_year(paper: dict) -> bool:
     return 1990 <= year <= current_year + 1
 
 
+def _format_keyword_for_query(keyword: str, *, arxiv: bool) -> str | None:
+    """Quote keyword phrases and punctuation-bearing terms for search APIs."""
+    kw = keyword.strip()
+    if not kw:
+        return None
+
+    if _SIMPLE_QUERY_TOKEN_RE.fullmatch(kw):
+        return f"all:{kw}" if arxiv else kw
+
+    escaped = kw.replace("\\", "\\\\").replace('"', '\\"')
+    return f'all:"{escaped}"' if arxiv else f'"{escaped}"'
+
+
 def _build_arxiv_query(keywords: list[str], days_back: int) -> str:
     """Build an arXiv search query that uses OR across keywords.
 
-    Example: (cat:cs.* OR cat:stat.*) AND (all:"large language model" OR all:LLM OR all:transformer)
+    Example: (cat:cs.* OR cat:stat.*) AND (all:"large language model" OR all:LLM OR all:"Q-learning")
     """
     since = datetime.now(timezone.utc) - timedelta(days=days_back)
     since_str = since.strftime("%Y%m%d")
     kw_parts = []
     for kw in keywords:
-        if " " in kw:
-            kw_parts.append(f'all:"{kw}"')
-        else:
-            kw_parts.append(f"all:{kw}")
+        part = _format_keyword_for_query(kw, arxiv=True)
+        if part:
+            kw_parts.append(part)
     kw_query = " OR ".join(kw_parts)
     # Broaden categories beyond cs.* to catch stat.ML, physics.*, math.*, etc.
     cats = " OR ".join([
@@ -80,15 +94,14 @@ def _build_ss_query(keywords: list[str]) -> str:
     """Build a Semantic Scholar query using OR semantics.
 
     SS bulk search treats space-separated terms as AND. Use '|' for OR.
-    Phrases with spaces must be quoted to stay as phrases.
-    Example: '"large language model" | LLM | transformer'
+    Phrases and punctuation-bearing terms must be quoted to stay together.
+    Example: '"large language model" | LLM | "Q-learning"'
     """
     parts = []
     for kw in keywords:
-        if " " in kw:
-            parts.append(f'"{kw}"')
-        else:
-            parts.append(kw)
+        part = _format_keyword_for_query(kw, arxiv=False)
+        if part:
+            parts.append(part)
     return " | ".join(parts)
 
 

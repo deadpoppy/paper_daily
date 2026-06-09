@@ -33,12 +33,14 @@ A daily AI paper recommendation tool. Automatically searches multiple academic s
 ```bash
 cd paper-daily
 pip install -e .
+cp -r skills/* ~/.claude/skills/
 ```
 
 Or with uv:
 
 ```bash
 uv pip install -e .
+cp -r skills/* ~/.claude/skills/
 ```
 
 ### Configuration (optional but recommended)
