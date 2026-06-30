@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     run_p = sub.add_parser("run", help="Run the daily recommendation pipeline")
     run_p.add_argument("-n", "--top-n", type=int, default=None, help="Number of papers to recommend")
     run_p.add_argument("-d", "--days", type=int, default=None, help="Look back N days (default: 180)")
-    run_p.add_argument("--trim-ratio", type=float, default=0.01, help="Trim bottom N ratio before assessment, e.g. 0.2 for 20%% (default: 0.2)")
+    run_p.add_argument("--trim-ratio", type=float, default=0.01, help="Trim bottom N ratio before assessment, e.g. 0.2 for 20%% (default: 0.01)")
     run_p.add_argument("--debug", action="store_true", help="Enable debug output: searched papers, LLM requests/responses, and filtering details")
     run_p.set_defaults(func=cmd_run)
 

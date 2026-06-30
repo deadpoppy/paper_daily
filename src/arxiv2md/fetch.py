@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +21,27 @@ from arxiv2md.config import (
 )
 
 _RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+def _atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
+    """Write text to *path* atomically.
+
+    Writes to a sibling temp file in the same directory and renames it into
+    place via os.replace(). Guarantees the destination is never left in a
+    partial state, even if the process is killed mid-write (Ctrl+C / OOM).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as f:
+            f.write(text)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 async def fetch_arxiv_html(
@@ -42,16 +65,19 @@ async def fetch_arxiv_html(
     source_url_path = cache_dir / "source_url.txt"
 
     if use_cache and _is_cache_fresh(html_path):
-        cached_source_url = source_url_path.read_text(encoding="utf-8").strip() if source_url_path.exists() else html_url
+        cached_source_url = (
+            source_url_path.read_text(encoding="utf-8").strip() if source_url_path.exists() else html_url
+        )
         return html_path.read_text(encoding="utf-8"), cached_source_url
 
-    # Try primary URL (arxiv.org) first
+    # Try primary URL (arxiv.org) first.
+    # No need to manually unlink stale cache: _atomic_write_text uses
+    # os.replace() which atomically overwrites any existing file.
     try:
         html_text, final_url = await _fetch_with_retries(html_url)
         evict_if_needed()
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        html_path.write_text(html_text, encoding="utf-8")
-        source_url_path.write_text(final_url, encoding="utf-8")
+        _atomic_write_text(html_path, html_text)
+        _atomic_write_text(source_url_path, final_url)
         return html_text, final_url
     except RuntimeError as primary_error:
         # If we got 404 and have ar5iv fallback, try it
@@ -59,9 +85,8 @@ async def fetch_arxiv_html(
             try:
                 html_text, final_url = await _fetch_with_retries(ar5iv_url)
                 evict_if_needed()
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                html_path.write_text(html_text, encoding="utf-8")
-                source_url_path.write_text(final_url, encoding="utf-8")
+                _atomic_write_text(html_path, html_text)
+                _atomic_write_text(source_url_path, final_url)
                 return html_text, final_url
             except Exception:
                 # If ar5iv also fails, raise the original error

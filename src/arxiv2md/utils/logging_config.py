@@ -125,13 +125,24 @@ class InterceptHandler(logging.Handler):
         )
 
 
+_configured = False
+
+
 def configure_logging() -> None:
     """Configure loguru for the application.
 
     Sets up JSON logging for production/Kubernetes environments
     or human-readable logging for development.
     Intercepts all standard library logging including uvicorn.
+
+    Idempotent: calling this more than once will not stack handlers on
+    the root logger, which would otherwise multiply log lines.
     """
+    global _configured
+    if _configured:
+        return
+    _configured = True
+
     # Remove default handler
     logger.remove()
 

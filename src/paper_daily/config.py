@@ -44,6 +44,33 @@ class Config:
     resolve_arxiv: bool = False
 
 
+def _getenv_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"Invalid integer value for {name}: {raw!r}") from None
+
+
+def _getenv_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        raise ValueError(f"Invalid float value for {name}: {raw!r}") from None
+
+
+def _getenv_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    return raw.lower() in ("1", "true", "yes")
+
+
 def load_config(env_path: Path | None = None) -> Config:
     if env_path and env_path.exists():
         load_dotenv(env_path)
@@ -65,24 +92,24 @@ def load_config(env_path: Path | None = None) -> Config:
     return Config(
         data_dir=data_dir,
         topics=topics,
-        top_n=int(os.getenv("PAPER_DAILY_TOP_N", "10")),
-        max_results_per_source=int(os.getenv("PAPER_DAILY_MAX_RESULTS", "50")),
-        days_back=int(os.getenv("PAPER_DAILY_DAYS_BACK", "180")),
+        top_n=_getenv_int("PAPER_DAILY_TOP_N", 10),
+        max_results_per_source=_getenv_int("PAPER_DAILY_MAX_RESULTS", 50),
+        days_back=_getenv_int("PAPER_DAILY_DAYS_BACK", 180),
         openalex_email=os.getenv("OPENALEX_EMAIL") or None,
         academic_value_url=os.getenv("ACADEMIC_VALUE_URL") or None,
         academic_value_api_key=os.getenv("ACADEMIC_VALUE_API_KEY") or None,
         academic_value_backup_api_key=os.getenv("ACADEMIC_VALUE_BACKUP_API_KEY") or None,
         academic_value_model=os.getenv("ACADEMIC_VALUE_MODEL", "MiniMax-M2.7"),
-        academic_value_concurrency=int(os.getenv("ACADEMIC_VALUE_CONCURRENCY", "20")),
-        academic_value_threshold=float(os.getenv("ACADEMIC_VALUE_THRESHOLD", "0.4")),
-        w_relevance=float(os.getenv("W_RELEVANCE", "0.20")),
-        w_recency=float(os.getenv("W_RECENCY", "0.20")),
-        w_impact=float(os.getenv("W_IMPACT", "0.20")),
-        w_academic_value=float(os.getenv("W_ACADEMIC_VALUE", "0.20")),
-        trim_ratio=float(os.getenv("PAPER_DAILY_TRIM_RATIO", "0.20")),
-        debug=os.getenv("PAPER_DAILY_DEBUG", "false").lower() in ("1", "true", "yes"),
+        academic_value_concurrency=_getenv_int("ACADEMIC_VALUE_CONCURRENCY", 20),
+        academic_value_threshold=_getenv_float("ACADEMIC_VALUE_THRESHOLD", 0.4),
+        w_relevance=_getenv_float("W_RELEVANCE", 0.20),
+        w_recency=_getenv_float("W_RECENCY", 0.20),
+        w_impact=_getenv_float("W_IMPACT", 0.20),
+        w_academic_value=_getenv_float("W_ACADEMIC_VALUE", 0.20),
+        trim_ratio=_getenv_float("PAPER_DAILY_TRIM_RATIO", 0.20),
+        debug=_getenv_bool("PAPER_DAILY_DEBUG", False),
         sources=sources,
-        resolve_arxiv=os.getenv("PAPER_DAILY_RESOLVE_ARXIV", "false").lower() in ("1", "true", "yes"),
+        resolve_arxiv=_getenv_bool("PAPER_DAILY_RESOLVE_ARXIV", False),
     )
 
 

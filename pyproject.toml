@@ -19,9 +19,6 @@ dependencies = [
     "tiktoken>=0.7.0",
 ]
 
-[project.optional-dependencies]
-llm = ["openai>=1.0.0"]
-
 [project.scripts]
 arxiv2md = "arxiv2md.__main__:main"
 paper-daily = "paper_daily.cli:main"

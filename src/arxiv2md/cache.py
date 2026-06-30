@@ -28,9 +28,20 @@ def _dir_size_bytes(path: Path) -> int:
 
 
 def _dir_mtime(path: Path) -> float:
-    """Return the most recent mtime of any file in the directory."""
+    """Return the most recent mtime of any file in the directory.
+
+    Files being created/overwritten is exactly the signal we want for LRU:
+    an entry whose cached HTML was refreshed should sort as "newest".
+    An empty directory (e.g. after a partial cleanup) falls back to its own
+    mtime so it is still orderable instead of returning 0.0.
+    """
     mtimes = [f.stat().st_mtime for f in path.rglob("*") if f.is_file()]
-    return max(mtimes) if mtimes else 0.0
+    if mtimes:
+        return max(mtimes)
+    try:
+        return path.stat().st_mtime
+    except FileNotFoundError:
+        return 0.0
 
 
 def get_cache_size_bytes() -> int:
