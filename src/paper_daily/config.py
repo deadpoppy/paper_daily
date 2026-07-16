@@ -14,6 +14,8 @@ class Topic:
     label: str
     keywords: list[str]
     weight: float = 1.0
+    exclude_keywords: list[str] = field(default_factory=list)
+    exclude_title_keywords: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -131,17 +133,42 @@ def _default_topics() -> list[Topic]:
         Topic("autonomous_driving_e2e", "End-to-End Autonomous Driving", [
             "end-to-end autonomous driving",
             "end-to-end self-driving",
-            "end-to-end driving model",
-            "end-to-end learning for autonomous driving",
-            "vision-based autonomous driving",
-            "imitation learning for autonomous driving",
-            "autonomous driving policy",
-            "reinforcement learning for autonomous driving",
-            "autonomous driving trajectory prediction",
-            "closed-loop autonomous driving evaluation",
-            "autonomous driving foundation model",
-            "autonomous driving benchmark",
-            "diffusion model for autonomous driving",
+            "end-to-end driving",
+            "end-to-end driving policy",
+            "end-to-end driving planning",
+            "one-stage end-to-end autonomous driving",
+            "two-stage end-to-end autonomous driving",
+            "perception-to-trajectory autonomous driving",
+            "perception-to-control autonomous driving",
+            "vision-to-trajectory autonomous driving",
+            "camera-to-trajectory autonomous driving",
+            "sensor-to-trajectory autonomous driving",
+            "joint perception and planning autonomous driving",
+            "joint perception prediction and planning autonomous driving",
+            "planning-oriented autonomous driving",
+            "closed-loop end-to-end autonomous driving",
+            "diffusion-based end-to-end autonomous driving",
+            "diffusion policy for autonomous driving",
+        ], exclude_keywords=[
+            "vision-language-action",
+            "vision language action",
+            "vision-language model",
+            "vision language model",
+            "large language model",
+            "language model",
+            "multimodal language model",
+            "language-guided driving",
+            "language conditioned driving",
+            "language-conditioned driving",
+            "natural language driving",
+            "autonomous driving agent",
+            "VLA",
+            "VLM",
+        ], exclude_title_keywords=[
+            "autonomous driving simulation",
+            "driving simulation",
+            "test-time verifier",
+            "trajectory evaluator",
         ]),
         # Topic("world_model", "World Models", [
         #     "world model",

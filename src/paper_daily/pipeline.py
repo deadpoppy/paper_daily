@@ -19,6 +19,18 @@ from paper_daily.summarize import summarize_arxiv_papers
 LOG = logging.getLogger("paper_daily.pipeline")
 
 
+def _matches_excluded_keyword(
+    paper: dict,
+    excluded_keywords: list[str],
+    fields: tuple[str, ...] = ("title", "abstract"),
+) -> bool:
+    """Return whether selected paper fields contain an excluded phrase."""
+    if not excluded_keywords:
+        return False
+    text = " ".join(str(paper.get(field, "")) for field in fields).casefold()
+    return any(keyword.casefold() in text for keyword in excluded_keywords)
+
+
 async def run_pipeline(cfg: Config) -> list[dict]:
     db_path = cfg.data_dir / "paper_daily.db"
     db = PaperDatabase(db_path)
@@ -46,6 +58,27 @@ async def run_pipeline(cfg: Config) -> list[dict]:
             sources=cfg.sources,
             resolve_arxiv=cfg.resolve_arxiv,
         )
+        if topic.exclude_keywords or topic.exclude_title_keywords:
+            before_exclusions = len(papers)
+            papers = [
+                paper
+                for paper in papers
+                if not (
+                    _matches_excluded_keyword(paper, topic.exclude_keywords)
+                    or _matches_excluded_keyword(
+                        paper,
+                        topic.exclude_title_keywords,
+                        fields=("title",),
+                    )
+                )
+            ]
+            excluded_count = before_exclusions - len(papers)
+            if excluded_count:
+                LOG.info(
+                    "Topic '%s': excluded %d papers matching excluded keywords",
+                    topic.key,
+                    excluded_count,
+                )
         # Tag with topic
         for p in papers:
             p.setdefault("topic_tags", [])
